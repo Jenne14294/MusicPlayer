@@ -6,6 +6,7 @@ import os
 import vlc
 import google.generativeai as gemini #gemini api
 import requests
+import webbrowser
 
 from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QLineEdit, QListWidget, QLabel, QSlider, QStyle, QGridLayout, QSystemTrayIcon, QMenu, QAction, QWidgetAction, QHBoxLayout
 from PyQt5.QtCore import Qt, QTimer
@@ -62,6 +63,7 @@ class TrayIcon(QSystemTrayIcon):
 		self.next_action = QAction("⏮️ 下一首")
 		self.loop_action = QAction("🔁 循環播放：關")
 		self.shuffle_action = QAction("🔀 隨機播放")
+		self.lyrics_action = QAction("📄 查詢歌詞")
 
 
 		# 音量區塊：滑桿 + 數值顯示
@@ -102,11 +104,11 @@ class TrayIcon(QSystemTrayIcon):
 		self.tray_menu.addSeparator()
 		self.tray_menu.addAction(self.loop_action)
 		self.tray_menu.addAction(self.shuffle_action)
+		self.tray_menu.addAction(self.lyrics_action)
 		self.tray_menu.addSeparator()
 		self.tray_menu.addAction(volume_widget_action)  # 音量滑桿
 		self.tray_menu.addSeparator()
 		self.tray_menu.addAction(self.restore_action)
-		self.tray_menu.addSeparator()
 		self.tray_menu.addAction(self.quit_action)
 		
 
@@ -122,6 +124,7 @@ class TrayIcon(QSystemTrayIcon):
 			self.next_action.triggered.connect(parent.play_next)
 			self.loop_action.triggered.connect(parent.toggle_loop)
 			self.shuffle_action.triggered.connect(parent.toggle_shuffle)
+			self.lyrics_action.triggered.connect(parent.search_lyrics)
 			self.restore_action.triggered.connect(parent.showNormal)
 			self.quit_action.triggered.connect(parent.quit_app)
 			self.volume_slider.valueChanged.connect(parent.change_volume)
@@ -407,10 +410,19 @@ class YouTubePlayer(QWidget):
 		self.update_playlist_widget()
 
 	def search_lyrics(self):
+		self.tray_icon.showMessage(
+				"YouTube 音樂播放器",
+				"正在搜尋歌詞，找到會自動開啟網頁(可能會找到錯誤的歌曲)",
+				QSystemTrayIcon.Information,
+				3000
+			)
+		
 		current_song = self.playlist[self.current_index]["title"]
 		ai_title = AI_title()
 		true_title = ai_title.ask_ai(f"請給我這首歌的歌名 只要歌名就好\n{current_song}")
-		lyrics = self.get_lyrics(true_title)
+		lyrics_url = self.get_lyrics(true_title)
+
+		webbrowser.get('windows-default').open_new(lyrics_url)
 
 	def get_lyrics(self, title):
 		client_access_token = "aW0PCZtUaF6ol8tBEFw6iAQ0dYakXRLpb_1nYzoOJBnAIbzctmdBK7c3IvcvE5Hs"
