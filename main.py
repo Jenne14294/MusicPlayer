@@ -141,6 +141,27 @@ class TrayIcon(QSystemTrayIcon):
 		self.status_action.setText(f"🎵 {title}  ⏱ {current_time}/{total_time}")
 
 
+class MarqueeLabel(QLabel):
+	def __init__(self, text='', parent=None):
+		super().__init__(text, parent)
+		self.setText(text)
+		self.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+		self.offset = 0
+		self.timer = QTimer(self)
+		self.timer.timeout.connect(self.scrollText)
+		self.timer.start(300)  # 控制滾動速度（ms）
+		self.setFixedWidth(300)
+
+	def setText(self, text):
+		super().setText(text)
+		self.offset = 0
+
+	def scrollText(self):
+		text = self.text()
+		self.offset = (self.offset + 1) % len(text)
+		self.setText(text[self.offset:] + text[:self.offset])
+
+
 class YouTubePlayer(QWidget):
 	def apply_custom_theme(self):
 		self.setStyleSheet("""
@@ -227,60 +248,62 @@ class YouTubePlayer(QWidget):
 
 		self.play_button = QPushButton("▶️ 播放")
 		self.play_button.clicked.connect(self.play_music)
-		layout.addWidget(self.play_button, 1, 0)
+		layout.addWidget(self.play_button, 0, 2)
 
 		self.pause_button = QPushButton("⏯️ 暫停")
 		self.pause_button.clicked.connect(self.toggle_pause)
-		layout.addWidget(self.pause_button, 1, 1)
+		layout.addWidget(self.pause_button, 1, 0)
 
 		# 第二列按鈕
 		self.prev_button = QPushButton("⏮️ 上一首")
 		self.prev_button.clicked.connect(self.play_prev)
-		layout.addWidget(self.prev_button, 2, 0)
+		layout.addWidget(self.prev_button, 1, 1)
 
 		self.next_button = QPushButton("⏭️ 下一首")
 		self.next_button.clicked.connect(self.play_next)
-		layout.addWidget(self.next_button, 2, 1)
+		layout.addWidget(self.next_button, 1, 2)
 
 
 		# 第三列按鈕（可加其他功能）
 		self.loop_button = QPushButton("🔁 循環播放：🟥")
 		self.loop_button.clicked.connect(self.toggle_loop)
-		layout.addWidget(self.loop_button, 3, 0)
+		layout.addWidget(self.loop_button, 2, 0)
 
 		self.shuffle_button = QPushButton("🔀 隨機播放")
 		self.shuffle_button.clicked.connect(self.toggle_shuffle)
-		layout.addWidget(self.shuffle_button, 3, 1)  # 中間放置
+		layout.addWidget(self.shuffle_button, 2, 1)  # 中間放置
+
+		self.lyrics_button = QPushButton("📄 查詢歌詞")
+		self.lyrics_button.clicked.connect(self.search_lyrics)
+		layout.addWidget(self.lyrics_button, 2, 2)
 
 		self.volume_label = QLabel("音量：70")
-		layout.addWidget(self.volume_label)
+		layout.addWidget(self.volume_label, 3, 0)
 
 		self.volume_slider = ClickableSlider(Qt.Horizontal)
 		self.volume_slider.setRange(0, 100)
 		self.volume_slider.setValue(70)
 		self.player.audio_set_volume(70)
 		self.volume_slider.valueChanged.connect(self.change_volume)
-		layout.addWidget(self.volume_slider)
+		layout.addWidget(self.volume_slider, 3, 1, 1, 2)
 
 		self.time_label = QLabel("播放時間：00:00 / 00:00")
-		layout.addWidget(self.time_label)
+		layout.addWidget(self.time_label, 4, 0)
 
 		self.position_slider = ClickableSlider(Qt.Horizontal)
 		self.position_slider.setRange(0, 1000)
 		self.position_slider.sliderMoved.connect(self.seek_position)
-		layout.addWidget(self.position_slider)
+		layout.addWidget(self.position_slider, 4, 1, 1, 2)
 
-		
-		self.current_label = QLabel("目前無播放音樂")
-		layout.addWidget(self.current_label, 6, 0)
+		self.current_label = QLabel("正在播放：")
+		self.current_title = MarqueeLabel(" ")
+		layout.addWidget(self.current_label, 5, 0)
+		layout.addWidget(self.current_title, 5, 1, 1, 2)
 
-		self.lyrics_button = QPushButton("📄 查詢歌詞")
-		self.lyrics_button.clicked.connect(self.search_lyrics)
-		layout.addWidget(self.lyrics_button, 6, 1)
 
 		self.list_widget = QListWidget()
 		self.list_widget.itemDoubleClicked.connect(self.select_song)
-		layout.addWidget(self.list_widget, 7, 0, 1, 2)  # 橫跨兩欄
+		layout.addWidget(self.list_widget, 6, 0, 1, 3)  # 橫跨兩欄
 
 		self.setLayout(layout)
 
@@ -313,7 +336,7 @@ class YouTubePlayer(QWidget):
 		self.cleanup_temp_file()
 
 		entry = self.playlist[self.current_index]
-		self.current_label.setText(f"正在播放：{entry['title']}")
+		self.current_title.setText(f"{entry['title']}")
 		self.list_widget.setCurrentRow(self.current_index)
 		self.temp_filepath = None  # 清除前次路徑
 
