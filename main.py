@@ -10,7 +10,7 @@ import webbrowser
 
 from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QLineEdit, QListWidget, QLabel, QSlider, QStyle, QGridLayout, QSystemTrayIcon, QMenu, QAction, QWidgetAction, QHBoxLayout
 from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QIcon
+from PyQt5.QtGui import QIcon, QFontMetrics
 from yt_dlp import YoutubeDL
 
 
@@ -140,26 +140,39 @@ class TrayIcon(QSystemTrayIcon):
 	def update_status(self, title, current_time, total_time):
 		self.status_action.setText(f"🎵 {title}  ⏱ {current_time}/{total_time}")
 
-
 class MarqueeLabel(QLabel):
 	def __init__(self, text='', parent=None):
 		super().__init__(text, parent)
-		self.setText(text)
 		self.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
 		self.offset = 0
 		self.timer = QTimer(self)
 		self.timer.timeout.connect(self.scrollText)
-		self.timer.start(300)  # 控制滾動速度（ms）
 		self.setFixedWidth(300)
+		self.fullText = text
+		self.scrolling = False
+		self.setText(text)
 
 	def setText(self, text):
-		super().setText(text)
+		self.fullText = text
+		metrics = QFontMetrics(self.font())
+		text_width = metrics.width(text)
+
 		self.offset = 0
+		self.timer.stop()
+		self.scrolling = False
+
+		if text_width > self.width():
+			self.timer.start(300)  # 啟動滾動
+			self.scrolling = True
+		super().setText(text)
 
 	def scrollText(self):
-		text = self.text()
+		if not self.scrolling:
+			return
+		text = self.fullText
 		self.offset = (self.offset + 1) % len(text)
-		self.setText(text[self.offset:] + text[:self.offset])
+		super().setText(text[self.offset:] + text[:self.offset])
+
 
 
 class YouTubePlayer(QWidget):
