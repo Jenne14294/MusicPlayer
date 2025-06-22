@@ -410,9 +410,10 @@ class YouTubePlayer(QWidget):
 
 	def on_playlist_loaded(self, playlist):
 		for item in playlist:
+			self.playlist.append(item)
 			self.list_widget.addItem(item['title'])
 
-		self.playlist_length = self.list_widget.count()
+		self.playlist_length = len(self.playlist)
 		self.current_length.setText(f"歌曲數量：{self.playlist_length}")
 
 	def play_music(self):
