@@ -9,7 +9,7 @@ import requests
 import webbrowser
 
 from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QLineEdit, QListWidget, QLabel, QSlider, QStyle, QGridLayout, QSystemTrayIcon, QMenu, QAction, QWidgetAction, QHBoxLayout
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt5.QtGui import QIcon, QFontMetrics
 from yt_dlp import YoutubeDL
 
@@ -173,7 +173,77 @@ class MarqueeLabel(QLabel):
 		self.offset = (self.offset + 1) % len(text)
 		super().setText(text[self.offset:] + text[:self.offset])
 
+class PlaylistLoader(QThread):
+    finished = pyqtSignal(list)  # 載入完成後傳回 playlist
 
+    def __init__(self, url, parent=None):
+        super().__init__(parent)
+        self.url = url
+
+    def run(self):
+        playlist = []
+        ydl_opts = {
+            'quiet': True,
+            'extract_flat': 'in_playlist',
+            'force_generic_extractor': True,
+        }
+
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(self.url, download=False)
+            entries = info.get('entries', [info])
+            for entry in entries:
+                video_url = f"https://www.youtube.com/watch?v={entry['id']}" if 'id' in entry else entry['url']
+                title = entry.get('title', video_url)
+                playlist.append({'title': title, 'url': video_url})
+
+        self.finished.emit(playlist)
+
+class MusicPlayerThread(QThread):
+    play_success = pyqtSignal(str)  # 成功串流或下載後回傳媒體路徑（串流為 URL，下載為本地檔案）
+    play_failed = pyqtSignal(str)   # 播放錯誤訊息
+
+    def __init__(self, entry, parent=None):
+        super().__init__(parent)
+        self.entry = entry
+        self.temp_filepath = None
+
+    def run(self):
+        ydl_opts = {
+            "format": "bestaudio/best",
+            "extractaudio": True,
+            "audioformat": "mp3",
+            "outtmpl": "%(extractor)s-%(id)s-%(title)s.%(ext)s",
+            "restrictfilenames": True,
+            "noplaylist": True,
+            "nocheckcertificate": True,
+            "ignoreerrors": False,
+            "logtostderr": False,
+            "quiet": True,
+            "no_warnings": True,
+            "default_search": "auto",
+            "source_address": "0.0.0.0",
+            "force-ipv4": True,
+            "cachedir": False,
+            "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        }
+
+        try:
+            with YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(self.entry['url'], download=False)
+                stream_url = info['url']
+                time.sleep(3)
+                self.play_success.emit(stream_url)
+                return
+        except Exception as e:
+            print("串流失敗，改為下載音訊播放")
+
+        try:
+            with YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(self.entry['url'], download=True)
+                self.temp_filepath = ydl.prepare_filename(info)
+                self.play_success.emit(os.path.abspath(self.temp_filepath))
+        except Exception as e:
+            self.play_failed.emit(f"播放失敗：{e}")
 
 class YouTubePlayer(QWidget):
 	def apply_custom_theme(self):
@@ -233,6 +303,7 @@ class YouTubePlayer(QWidget):
 
 		self.playlist = []
 		self.current_index = 0
+		self.playlist_length = 0
 		self.loop = False
 		self.instance = vlc.Instance('--network-caching=1000', '--file-caching=1000', '--live-caching=1000')
 		self.player = self.instance.media_player_new()
@@ -277,7 +348,7 @@ class YouTubePlayer(QWidget):
 		layout.addWidget(self.next_button, 1, 2)
 
 
-		# 第三列按鈕（可加其他功能）
+		# 第三列按鈕
 		self.loop_button = QPushButton("🔁 循環播放：🟥")
 		self.loop_button.clicked.connect(self.toggle_loop)
 		layout.addWidget(self.loop_button, 2, 0)
@@ -290,6 +361,7 @@ class YouTubePlayer(QWidget):
 		self.lyrics_button.clicked.connect(self.search_lyrics)
 		layout.addWidget(self.lyrics_button, 2, 2)
 
+		# 音量控制
 		self.volume_label = QLabel("音量：70")
 		layout.addWidget(self.volume_label, 3, 0)
 
@@ -300,6 +372,8 @@ class YouTubePlayer(QWidget):
 		self.volume_slider.valueChanged.connect(self.change_volume)
 		layout.addWidget(self.volume_slider, 3, 1, 1, 2)
 
+
+		# 時間控制
 		self.time_label = QLabel("播放時間：00:00 / 00:00")
 		layout.addWidget(self.time_label, 4, 0)
 
@@ -308,38 +382,38 @@ class YouTubePlayer(QWidget):
 		self.position_slider.sliderMoved.connect(self.seek_position)
 		layout.addWidget(self.position_slider, 4, 1, 1, 2)
 
+
+		# 歌名顯示
 		self.current_label = QLabel("正在播放：")
 		self.current_title = MarqueeLabel(" ")
 		layout.addWidget(self.current_label, 5, 0)
 		layout.addWidget(self.current_title, 5, 1, 1, 2)
 
+		# 歌曲總數顯示
+		self.current_length = QLabel(f"歌曲數量：{self.playlist_length}")
+		layout.addWidget(self.current_length, 6, 0, 1, 3)
 
+		# 歌單顯示
 		self.list_widget = QListWidget()
 		self.list_widget.itemDoubleClicked.connect(self.select_song)
-		layout.addWidget(self.list_widget, 6, 0, 1, 3)  # 橫跨兩欄
+		layout.addWidget(self.list_widget, 7, 0, 1, 3)  # 橫跨兩欄
 
 		self.setLayout(layout)
 
 	def load_playlist(self):
 		url = self.url_input.text()
-		ydl_opts = {
-			'quiet': True,
-			'extract_flat': 'in_playlist',
-			'force_generic_extractor': True,
-		}
+		
+		# 啟動背景載入執行緒
+		self.loader_thread = PlaylistLoader(url)
+		self.loader_thread.finished.connect(self.on_playlist_loaded)
+		self.loader_thread.start()
 
-		def fetch():
-			with YoutubeDL(ydl_opts) as ydl:
-				info = ydl.extract_info(url, download=False)
+	def on_playlist_loaded(self, playlist):
+		for item in playlist:
+			self.list_widget.addItem(item['title'])
 
-				entries = info.get('entries', [info])
-				for entry in entries:
-					video_url = f"https://www.youtube.com/watch?v={entry['id']}" if 'id' in entry else entry['url']
-					title = entry.get('title', video_url)
-					self.playlist.append({'title': title, 'url': video_url})
-					self.list_widget.addItem(title)
-
-		threading.Thread(target=fetch).start()
+		self.playlist_length = self.list_widget.count()
+		self.current_length.setText(f"歌曲數量：{self.playlist_length}")
 
 	def play_music(self):
 		if not self.playlist:
@@ -351,48 +425,29 @@ class YouTubePlayer(QWidget):
 		entry = self.playlist[self.current_index]
 		self.current_title.setText(f"{entry['title']}")
 		self.list_widget.setCurrentRow(self.current_index)
-		self.temp_filepath = None  # 清除前次路徑
+		self.temp_filepath = None
 
-		def fetch_and_play():
-			ydl_opts = {
-					"format": "bestaudio/best",
-					"extractaudio": True,
-					"audioformat": "mp3",
-					"outtmpl": "%(extractor)s-%(id)s-%(title)s.%(ext)s",
-					"restrictfilenames": True,
-					"noplaylist": True,
-					"nocheckcertificate": True,
-					"ignoreerrors": False,
-					"logtostderr": False,
-					"quiet": True,
-					"no_warnings": True,
-					"default_search": "auto",
-					"source_address": "0.0.0.0",
-					"force-ipv4": True,
-					"cachedir": False,
-					"user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-			}
+		# 啟動播放用的 QThread
+		self.music_thread = MusicPlayerThread(entry)
+		self.music_thread.play_success.connect(self.handle_play_success)
+		self.music_thread.play_failed.connect(self.handle_play_failed)
+		self.music_thread.start()
 
-			try:
-				with YoutubeDL(ydl_opts) as ydl:
-					info = ydl.extract_info(entry['url'], download=False)
-					stream_url = info['url']
-					media = self.instance.media_new(stream_url)
-					self.player.set_media(media)
-					self.player.play()
-					time.sleep(3)
-					if self.player.get_state() == vlc.State.Error:
-						raise Exception("Stream failed")
-			except:
-				print("串流失敗，改為下載音訊播放")
-				with YoutubeDL(ydl_opts) as ydl:
-					info = ydl.extract_info(entry['url'], download=True)
-					self.temp_filepath = ydl.prepare_filename(info)
-					media = self.instance.media_new(os.path.abspath(self.temp_filepath))
-					self.player.set_media(media)
-					self.player.play()
+	def handle_play_success(self, media_path):
+		# 串流（http）或本地檔案都可以用 media_new
+		media = self.instance.media_new(media_path)
+		self.player.set_media(media)
+		self.player.play()
+		
+		# 如果是下載的檔案，記得保存 temp 檔路徑以便清理
+		if not media_path.startswith("http"):
+			self.temp_filepath = media_path
 
-		threading.Thread(target=fetch_and_play).start()
+	def handle_play_failed(self, msg):
+		print(msg)
+		# 你也可以彈出 QMessageBox 或更新 UI 顯示錯誤
+
+
 
 	def cleanup_temp_file(self):
 		if self.temp_filepath and os.path.exists(self.temp_filepath):
