@@ -391,7 +391,11 @@ class YouTubePlayer(QWidget):
 
 		# 歌曲總數顯示
 		self.current_length = QLabel(f"歌曲數量：{self.playlist_length}")
-		layout.addWidget(self.current_length, 6, 0, 1, 3)
+		layout.addWidget(self.current_length, 6, 0, 1, 2)
+
+		self.clear_button = QPushButton("⏏️ 清除歌單")
+		self.clear_button.clicked.connect(self.clear_playlist)
+		layout.addWidget(self.clear_button, 6, 2)
 
 		# 歌單顯示
 		self.list_widget = QListWidget()
@@ -415,6 +419,19 @@ class YouTubePlayer(QWidget):
 
 		self.playlist_length = len(self.playlist)
 		self.current_length.setText(f"歌曲數量：{self.playlist_length}")
+
+	def clear_playlist(self):
+		self.player.stop()  # 停止當前播放（如有）
+		self.cleanup_temp_file()  # 清除暫存音訊（如果你有實作）
+
+		self.playlist.clear()  # 清除內部播放清單
+		self.list_widget.clear()  # 清空顯示列表
+		self.playlist_length = 0
+		self.current_index = 0
+		self.current_title.setText(" ")
+		self.current_length.setText("歌曲數量：0")
+
+		
 
 	def play_music(self):
 		if not self.playlist:
