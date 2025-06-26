@@ -1,6 +1,5 @@
 import sys
 import random
-import threading
 import time
 import os
 import vlc
@@ -66,29 +65,42 @@ class TrayIcon(QSystemTrayIcon):
 		self.lyrics_action = QAction("📄 查詢歌詞")
 
 
-		# 音量區塊：滑桿 + 數值顯示
+		# 音量區塊：滑桿 + 數值顯示 + 靜音按鈕
 		volume_widget = QWidget()
 		volume_layout = QHBoxLayout(volume_widget)
 		volume_layout.setContentsMargins(8, 2, 8, 2)
 
+		# 🔇 靜音按鈕（實體按鈕嵌入 layout）
+		self.mute_button = QPushButton("🔇")
+		self.mute_button.setFixedSize(24, 24)
+		self.mute_button.setCheckable(True)
+		self.mute_button.setToolTip("靜音 / 取消靜音")
+
+		volume_layout.addWidget(self.mute_button)
+
+		# 原本的音量滑桿
 		self.volume_slider = QSlider(Qt.Horizontal)
 		self.volume_slider.setRange(0, 100)
-		self.volume_slider.setValue(50)
+		self.volume_slider.setValue(70)
 		self.volume_slider.setFixedWidth(100)
 		self.volume_slider.setToolTip("音量調整")
 
-		self.volume_label = QLabel("50")
+		# 原本的音量數值標籤
+		self.volume_label = QLabel("70")
 		self.volume_label.setFixedWidth(30)
 
 		self.volume_slider.valueChanged.connect(
 			lambda val: self.volume_label.setText(str(val))
 		)
 
+		# 加入原有部件
 		volume_layout.addWidget(self.volume_slider)
 		volume_layout.addWidget(self.volume_label)
 
+		# 加到托盤選單
 		volume_widget_action = QWidgetAction(self.tray_menu)
 		volume_widget_action.setDefaultWidget(volume_widget)
+
 
 		# 其他功能
 		self.restore_action = QAction("還原視窗")
@@ -128,6 +140,7 @@ class TrayIcon(QSystemTrayIcon):
 			self.restore_action.triggered.connect(parent.showNormal)
 			self.quit_action.triggered.connect(parent.quit_app)
 			self.volume_slider.valueChanged.connect(parent.change_volume)
+			self.mute_button.clicked.connect(parent.toggle_mute) 
 
 		self.activated.connect(self.on_activated)
 
@@ -139,6 +152,18 @@ class TrayIcon(QSystemTrayIcon):
 
 	def update_status(self, title, current_time, total_time):
 		self.status_action.setText(f"🎵 {title}  ⏱ {current_time}/{total_time}")
+
+	def update_playing_state(self, is_playing: bool):
+		if is_playing:
+			self.pause_action.setText("⏯️ 暫停")
+		else:
+			self.pause_action.setText("⏯️ 繼續")
+
+	def update_mute_state(self, is_muted: bool):
+		if is_muted:
+			self.mute_button.setText("🔇")
+		else:
+			self.mute_button.setText("🔊")
 
 class MarqueeLabel(QLabel):
 	def __init__(self, text='', parent=None):
@@ -245,6 +270,25 @@ class MusicPlayerThread(QThread):
         except Exception as e:
             self.play_failed.emit(f"播放失敗：{e}")
 
+class LyricsWorker(QThread):
+	signal_done = pyqtSignal(str)  # 發送歌詞網址或 None
+
+	def __init__(self, title):
+		super().__init__()
+		self.title = title
+
+	def run(self):
+		try:
+			client_access_token = "aW0PCZtUaF6ol8tBEFw6iAQ0dYakXRLpb_1nYzoOJBnAIbzctmdBK7c3IvcvE5Hs"
+			url = f"http://api.genius.com/search?q={self.title}&access_token={client_access_token}"
+			response = requests.get(url)
+			json_data = response.json()
+			song = json_data['response']['hits'][0]['result']['relationships_index_url']
+			self.signal_done.emit(song)
+		except Exception as e:
+			print("歌詞搜尋錯誤：", e)
+			self.signal_done.emit(None)
+
 class YouTubePlayer(QWidget):
 	def apply_custom_theme(self):
 		self.setStyleSheet("""
@@ -326,7 +370,7 @@ class YouTubePlayer(QWidget):
 		layout.addWidget(self.url_input, 0, 0)  # 橫跨三欄
 
 		# 第一列按鈕
-		self.load_button = QPushButton("載入播放清單")
+		self.load_button = QPushButton("🔍 搜尋")
 		self.load_button.clicked.connect(self.load_playlist)
 		layout.addWidget(self.load_button, 0, 1)
 
@@ -361,6 +405,7 @@ class YouTubePlayer(QWidget):
 		self.lyrics_button.clicked.connect(self.search_lyrics)
 		layout.addWidget(self.lyrics_button, 2, 2)
 
+
 		# 音量控制
 		self.volume_label = QLabel("音量：70")
 		layout.addWidget(self.volume_label, 3, 0)
@@ -370,7 +415,12 @@ class YouTubePlayer(QWidget):
 		self.volume_slider.setValue(70)
 		self.player.audio_set_volume(70)
 		self.volume_slider.valueChanged.connect(self.change_volume)
-		layout.addWidget(self.volume_slider, 3, 1, 1, 2)
+		layout.addWidget(self.volume_slider, 3, 1)
+
+		self.mute_button = QPushButton("🔇 取消靜音")
+		self.mute_button.setCheckable(True)
+		self.mute_button.clicked.connect(self.toggle_mute)
+		layout.addWidget(self.mute_button, 3, 2)
 
 
 		# 時間控制
@@ -485,10 +535,13 @@ class YouTubePlayer(QWidget):
 	def toggle_pause(self):
 		if self.player.is_playing():
 			self.player.pause()
+			self.tray_icon.update_playing_state(False)  # 暫停時
 			self.pause_button.setText("⏯️ 繼續")
 		else:
 			self.player.play()
+			self.tray_icon.update_playing_state(True)   # 開始播放時
 			self.pause_button.setText("⏯️ 暫停")
+
 
 	def play_next(self):
 		self.is_handling_end = True  # 主動切歌時也設為 True
@@ -520,36 +573,43 @@ class YouTubePlayer(QWidget):
 
 	def search_lyrics(self):
 		self.tray_icon.showMessage(
-				"YouTube 音樂播放器",
-				"正在搜尋歌詞，找到會自動開啟網頁(可能會找到錯誤的歌曲)",
-				QSystemTrayIcon.Information,
-				3000
-			)
-		
+			"YouTube 音樂播放器",
+			"正在搜尋歌詞，找到會自動開啟網頁(可能會找到錯誤的歌曲)",
+			QSystemTrayIcon.Information,
+			3000
+		)
+
 		current_song = self.playlist[self.current_index]["title"]
 		ai_title = AI_title()
 		true_title = ai_title.ask_ai(f"請給我這首歌的歌名 只要歌名就好\n{current_song}")
-		lyrics_url = self.get_lyrics(true_title)
 
-		webbrowser.get('windows-default').open_new(lyrics_url)
+		self.lyrics_thread = LyricsWorker(true_title)
+		self.lyrics_thread.signal_done.connect(self.open_lyrics)
+		self.lyrics_thread.start()
 
-	def get_lyrics(self, title):
-		client_access_token = "aW0PCZtUaF6ol8tBEFw6iAQ0dYakXRLpb_1nYzoOJBnAIbzctmdBK7c3IvcvE5Hs"
-		url = f"http://api.genius.com/search?q={title}&access_token={client_access_token}"
 
-		try:
-			response = requests.get(url)
-			json_data = response.json()
+	def open_lyrics(self, url):
+		if url:
+			webbrowser.get('windows-default').open_new(url)
+		else:
+			self.tray_icon.showMessage(
+				"歌詞搜尋失敗",
+				"找不到歌詞或搜尋錯誤",
+				QSystemTrayIcon.Warning,
+				3000
+			)
 
-			song = json_data['response']['hits'][0]['result']['relationships_index_url']
-			return song
-		except Exception as e:
-			print(e)
-			return None
 
 	def change_volume(self, value):
 		self.player.audio_set_volume(value)
 		self.volume_label.setText(f"音量：{value}")
+
+	def toggle_mute(self):
+		muted = self.player.audio_get_mute()
+		self.mute_button.setText("🔇 取消靜音" if not muted else "🔊 切換靜音")
+		self.tray_icon.update_mute_state(not muted)
+		self.player.audio_toggle_mute()
+
 
 	def select_song(self):
 		row = self.list_widget.currentRow()
