@@ -7,7 +7,7 @@ import google.generativeai as gemini #gemini api
 import requests
 import webbrowser
 
-from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QLineEdit, QListWidget, QLabel, QSlider, QStyle, QGridLayout, QSystemTrayIcon, QMenu, QAction, QWidgetAction, QHBoxLayout, QMessageBox
+from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QLineEdit, QListWidget, QLabel, QSlider, QStyle, QGridLayout, QSystemTrayIcon, QMenu, QAction, QWidgetAction, QHBoxLayout, QMessageBox, QDialog, QVBoxLayout, QListWidgetItem
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt5.QtGui import QIcon, QFontMetrics
 from yt_dlp import YoutubeDL
@@ -194,81 +194,175 @@ class MarqueeLabel(QLabel):
 	def scrollText(self):
 		if not self.scrolling:
 			return
-		text = self.fullText
+		text = self.fullText + "     "
 		self.offset = (self.offset + 1) % len(text)
 		super().setText(text[self.offset:] + text[:self.offset])
 	
+class SearchResultsDialog(QDialog):
+	def apply_custom_theme(self):
+		self.setStyleSheet("""
+		QWidget {
+			background-color: #1e1e2f;
+			color: #ffffff;
+			font-family: "Microsoft JhengHei";
+			font-size: 14px;
+		}
+		QPushButton {
+			background-color: #2e2e3f;
+			border: 1px solid #555;
+			border-radius: 6px;
+			padding: 6px;
+		}
+		QPushButton:hover {
+			background-color: #3e3e5f;
+		}
+		QPushButton:pressed {
+			background-color: #5e5e7f;
+		}
+		QLineEdit, QListWidget {
+			background-color: #2a2a3a;
+			border: 1px solid #555;
+			border-radius: 4px;
+			padding: 4px;
+		}
+		QSlider::groove:horizontal {
+			background: #444;
+			height: 6px;
+			border-radius: 3px;
+		}
+		QSlider::handle:horizontal {
+			background: #ff8c00;
+			width: 14px;
+			margin: -4px 0;
+			border-radius: 7px;
+		}
+		QListWidget::item:selected {
+		background-color: #0078d7;   /* 高亮底色 */
+		color: white;                /* 字體顏色 */
+		font-weight: bold;           /* 粗體 */
+	}
+	""")
+		
+	def __init__(self, results, parent=None):
+		super().__init__(parent)
+		self.setWindowTitle("搜尋結果")
+		self.resize(400, 300)
+		self.apply_custom_theme()
+
+		layout = QVBoxLayout(self)
+		self.list_widget = QListWidget()
+		self.list_widget.setSelectionMode(QListWidget.SingleSelection)
+
+		# 限制只顯示前五個
+		for item in results:
+			list_item = QListWidgetItem(item['title'])
+			list_item.setData(Qt.UserRole, item['url'])
+			self.list_widget.addItem(list_item)
+
+		layout.addWidget(self.list_widget)
+
+		# 確定與取消按鈕
+		button_layout = QHBoxLayout()
+		btn_ok = QPushButton("加入播放清單")
+		btn_cancel = QPushButton("取消")
+		btn_ok.clicked.connect(self.accept)
+		btn_cancel.clicked.connect(self.reject)
+		button_layout.addWidget(btn_ok)
+		button_layout.addWidget(btn_cancel)
+		layout.addLayout(button_layout)
+
+	def get_selected_items(self):
+		"""回傳使用者選取的項目（格式：{'title':..., 'url':...}）"""
+		selected = []
+		for item in self.list_widget.selectedItems():
+			selected.append({
+				'title': item.text(),
+				'url': item.data(Qt.UserRole)
+			})
+		return selected
+
 class PlaylistLoader(QThread):
-    finished = pyqtSignal(list)  # 載入完成後傳回 playlist
+	finished = pyqtSignal(list, bool)  # 載入完成後傳回 playlist
 
-    def __init__(self, url, parent=None):
-        super().__init__(parent)
-        self.url = url
+	def __init__(self, url, parent=None):
+		super().__init__(parent)
+		self.url = url
+		self.is_keyword = False
 
-    def run(self):
-        playlist = []
-        ydl_opts = {
-            'quiet': True,
-            'extract_flat': 'in_playlist',
-            'force_generic_extractor': True,
-        }
+	def run(self):
+		playlist = []
+		ydl_opts = {
+			'quiet': True,
+			'extract_flat': 'in_playlist',
+			'force_generic_extractor': True,
+		}
 
-        with YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(self.url, download=False)
-            entries = info.get('entries', [info])
-            for entry in entries:
-                video_url = f"https://www.youtube.com/watch?v={entry['id']}" if 'id' in entry else entry['url']
-                title = entry.get('title', video_url)
-                playlist.append({'title': title, 'url': video_url})
+		with YoutubeDL(ydl_opts) as ydl:
+			try:
+				if self.url.startswith("https://"):
+					info = ydl.extract_info(self.url, download=False)
+				else:
+					self.is_keyword = True
+					search_query = f"ytsearch5:{self.url}"  # 搜尋前 5 筆
+					info = ydl.extract_info(search_query, download=False)
 
-        self.finished.emit(playlist)
+				entries = info.get('entries', [info])
+				for entry in entries:
+					video_url = f"https://www.youtube.com/watch?v={entry['id']}" if 'id' in entry else entry['url']
+					title = entry.get('title', video_url)
+					playlist.append({'title': title, 'url': video_url})
+
+			except Exception as e:
+				print(f"讀取失敗：{e}")
+
+		self.finished.emit(playlist, self.is_keyword)
 
 class MusicPlayerThread(QThread):
-    play_success = pyqtSignal(str)  # 成功串流或下載後回傳媒體路徑（串流為 URL，下載為本地檔案）
-    play_failed = pyqtSignal(str)   # 播放錯誤訊息
+	play_success = pyqtSignal(str)  # 成功串流或下載後回傳媒體路徑（串流為 URL，下載為本地檔案）
+	play_failed = pyqtSignal(str)   # 播放錯誤訊息
 
-    def __init__(self, entry, parent=None):
-        super().__init__(parent)
-        self.entry = entry
-        self.temp_filepath = None
+	def __init__(self, entry, parent=None):
+		super().__init__(parent)
+		self.entry = entry
+		self.temp_filepath = None
 
-    def run(self):
-        ydl_opts = {
-            "format": "bestaudio/best",
-            "extractaudio": True,
-            "audioformat": "mp3",
-            "outtmpl": "%(extractor)s-%(id)s-%(title)s.%(ext)s",
-            "restrictfilenames": True,
-            "noplaylist": True,
-            "nocheckcertificate": True,
-            "ignoreerrors": False,
-            "logtostderr": False,
-            "quiet": True,
-            "no_warnings": True,
-            "default_search": "auto",
-            "source_address": "0.0.0.0",
-            "force-ipv4": True,
-            "cachedir": False,
-            "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-        }
+	def run(self):
+		ydl_opts = {
+			"format": "bestaudio/best",
+			"extractaudio": True,
+			"audioformat": "mp3",
+			"outtmpl": "%(extractor)s-%(id)s-%(title)s.%(ext)s",
+			"restrictfilenames": True,
+			"noplaylist": True,
+			"nocheckcertificate": True,
+			"ignoreerrors": False,
+			"logtostderr": False,
+			"quiet": True,
+			"no_warnings": True,
+			"default_search": "auto",
+			"source_address": "0.0.0.0",
+			"force-ipv4": True,
+			"cachedir": False,
+			"user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+		}
 
-        try:
-            with YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(self.entry['url'], download=False)
-                stream_url = info['url']
-                time.sleep(3)
-                self.play_success.emit(stream_url)
-                return
-        except Exception as e:
-            print("串流失敗，改為下載音訊播放")
+		try:
+			with YoutubeDL(ydl_opts) as ydl:
+				info = ydl.extract_info(self.entry['url'], download=False)
+				stream_url = info['url']
+				time.sleep(3)
+				self.play_success.emit(stream_url)
+				return
+		except Exception as e:
+			print("串流失敗，改為下載音訊播放")
 
-        try:
-            with YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(self.entry['url'], download=True)
-                self.temp_filepath = ydl.prepare_filename(info)
-                self.play_success.emit(os.path.abspath(self.temp_filepath))
-        except Exception as e:
-            self.play_failed.emit(f"播放失敗：{e}")
+		try:
+			with YoutubeDL(ydl_opts) as ydl:
+				info = ydl.extract_info(self.entry['url'], download=True)
+				self.temp_filepath = ydl.prepare_filename(info)
+				self.play_success.emit(os.path.abspath(self.temp_filepath))
+		except Exception as e:
+			self.play_failed.emit(f"播放失敗：{e}")
 
 class LyricsWorker(QThread):
 	signal_done = pyqtSignal(str)  # 發送歌詞網址或 None
@@ -440,7 +534,7 @@ class YouTubePlayer(QWidget):
 		layout.addWidget(self.current_title, 5, 1, 1, 2)
 
 		# 歌曲總數顯示
-		self.current_length = QLabel(f"歌曲數量：{self.playlist_length}")
+		self.current_length = QLabel(f"歌曲數量：{self.current_index + 1 % self.playlist_length if self.playlist_length > 0 else 0} / {self.playlist_length}")
 		layout.addWidget(self.current_length, 6, 0, 1, 2)
 
 		self.clear_button = QPushButton("⏏️ 清除歌單")
@@ -466,13 +560,21 @@ class YouTubePlayer(QWidget):
 		self.loader_thread.finished.connect(self.on_playlist_loaded)
 		self.loader_thread.start()
 
-	def on_playlist_loaded(self, playlist):
-		for item in playlist:
-			self.playlist.append(item)
-			self.list_widget.addItem(item['title'])
+	def on_playlist_loaded(self, playlist, is_keyword):
+		if is_keyword:
+			dialog = SearchResultsDialog(playlist)  # search_results 是 [{'title':..., 'url':...}, ...]
+			if dialog.exec_() == QDialog.Accepted:
+				selected = dialog.get_selected_items()
+				for item in selected:
+					self.playlist.append(item)
+					self.list_widget.addItem(item['title'])
+		else:
+			for item in playlist:
+				self.playlist.append(item)
+				self.list_widget.addItem(item['title'])
 
 		self.playlist_length = len(self.playlist)
-		self.current_length.setText(f"歌曲數量：{self.playlist_length}")
+		self.current_length.setText(f"歌曲數量：{self.current_index + 1 % self.playlist_length if self.playlist_length > 0 else 0} / {self.playlist_length}")
 
 	def clear_playlist(self):
 		self.player.stop()  # 停止當前播放（如有）
@@ -483,7 +585,7 @@ class YouTubePlayer(QWidget):
 		self.playlist_length = 0
 		self.current_index = 0
 		self.current_title.setText(" ")
-		self.current_length.setText("歌曲數量：0")
+		self.current_length.setText(f"歌曲數量：{self.current_index + 1 % self.playlist_length if self.playlist_length > 0 else 0} / {self.playlist_length}")
 
 		
 
@@ -619,6 +721,7 @@ class YouTubePlayer(QWidget):
 		row = self.list_widget.currentRow()
 		if row != -1:
 			self.current_index = row
+			self.current_length.setText(f"歌曲數量：{self.current_index + 1 % self.playlist_length if self.playlist_length > 0 else 0} / {self.playlist_length}")
 			self.play_music()
 
 	def seek_position(self, position):
@@ -672,13 +775,13 @@ class YouTubePlayer(QWidget):
 	def closeEvent(self, event):
 		reply = QMessageBox.question(
 			self,
-			"最小化到通知列",
-			"是否要將程式最小化到通知列？\n選擇「否」將直接關閉程式。",
+			"關閉程式確認",
+			"您確定要關閉程式嗎？",
 			QMessageBox.Yes | QMessageBox.No,
 			QMessageBox.Yes
 		)
 
-		if reply == QMessageBox.Yes:
+		if reply == QMessageBox.No:
 			event.ignore()  # 忽略關閉，隱藏視窗
 			self.hide()
 			self.tray_icon.showMessage(
