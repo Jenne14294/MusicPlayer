@@ -7,7 +7,7 @@ import google.generativeai as gemini #gemini api
 import requests
 import webbrowser
 
-from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QLineEdit, QListWidget, QLabel, QSlider, QStyle, QGridLayout, QSystemTrayIcon, QMenu, QAction, QWidgetAction, QHBoxLayout
+from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QLineEdit, QListWidget, QLabel, QSlider, QStyle, QGridLayout, QSystemTrayIcon, QMenu, QAction, QWidgetAction, QHBoxLayout, QMessageBox
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt5.QtGui import QIcon, QFontMetrics
 from yt_dlp import YoutubeDL
@@ -197,7 +197,7 @@ class MarqueeLabel(QLabel):
 		text = self.fullText
 		self.offset = (self.offset + 1) % len(text)
 		super().setText(text[self.offset:] + text[:self.offset])
-
+	
 class PlaylistLoader(QThread):
     finished = pyqtSignal(list)  # 載入完成後傳回 playlist
 
@@ -454,9 +454,13 @@ class YouTubePlayer(QWidget):
 
 		self.setLayout(layout)
 
+
 	def load_playlist(self):
 		url = self.url_input.text()
-		
+
+		if not url:
+			return
+			
 		# 啟動背景載入執行緒
 		self.loader_thread = PlaylistLoader(url)
 		self.loader_thread.finished.connect(self.on_playlist_loaded)
@@ -666,15 +670,26 @@ class YouTubePlayer(QWidget):
 			QTimer.singleShot(500, self.reset_end_flag)
 
 	def closeEvent(self, event):
-			"""攔截視窗關閉事件，改為隱藏視窗"""
-			event.ignore()          # 忽略預設關閉事件
-			self.hide()             # 隱藏視窗
+		reply = QMessageBox.question(
+			self,
+			"最小化到通知列",
+			"是否要將程式最小化到通知列？\n選擇「否」將直接關閉程式。",
+			QMessageBox.Yes | QMessageBox.No,
+			QMessageBox.Yes
+		)
+
+		if reply == QMessageBox.Yes:
+			event.ignore()  # 忽略關閉，隱藏視窗
+			self.hide()
 			self.tray_icon.showMessage(
 				"YouTube 音樂播放器",
 				"程式已隱藏至通知列。",
 				QSystemTrayIcon.Information,
 				3000
 			)
+		else:
+			self.quit_app()
+
 
 	def on_tray_icon_activated(self, reason):
 			"""點擊托盤圖示的回調"""
