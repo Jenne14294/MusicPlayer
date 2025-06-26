@@ -7,7 +7,7 @@ import google.generativeai as gemini #gemini api
 import requests
 import webbrowser
 
-from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QLineEdit, QListWidget, QLabel, QSlider, QStyle, QGridLayout, QSystemTrayIcon, QMenu, QAction, QWidgetAction, QHBoxLayout, QMessageBox, QDialog, QVBoxLayout, QListWidgetItem
+from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QLineEdit, QListWidget, QLabel, QSlider, QStyle, QGridLayout, QSystemTrayIcon, QMenu, QAction, QWidgetAction, QHBoxLayout, QMessageBox, QDialog, QVBoxLayout, QListWidgetItem, QFileDialog
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt5.QtGui import QIcon, QFontMetrics
 from yt_dlp import YoutubeDL
@@ -345,6 +345,10 @@ class MusicPlayerThread(QThread):
 			"cachedir": False,
 			"user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 		}
+		
+		if not self.entry['url'].startswith("https://"):
+			self.play_success.emit(self.entry['url'])
+
 
 		try:
 			with YoutubeDL(ydl_opts) as ydl:
@@ -382,6 +386,39 @@ class LyricsWorker(QThread):
 		except Exception as e:
 			print("歌詞搜尋錯誤：", e)
 			self.signal_done.emit(None)
+
+class ExportPlaylistDialog(QDialog):
+    def __init__(self, playlist, parent=None):
+        super().__init__(parent)
+        self.playlist = playlist
+        self.save_playlist()
+
+    def save_playlist(self):
+        # 出現「另存為」對話框
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "匯出播放清單",
+            "playlist.m3u",
+            "M3U 檔案 (*.m3u);;文字檔 (*.txt)"
+        )
+
+        if not path:
+            return  # 使用者取消
+
+        # 確保副檔名
+        if not path.lower().endswith(".m3u"):
+            path += ".m3u"
+
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("#EXTM3U\n")
+                for item in self.playlist:
+                    f.write(f"#EXTINF:-1,{item['title']}\n")
+                    f.write(f"{item['url']}\n")
+
+            QMessageBox.information(self, "匯出成功", f"播放清單已儲存到：\n{path}")
+        except Exception as e:
+            QMessageBox.critical(self, "匯出失敗", f"無法儲存播放清單：\n{e}")
 
 class YouTubePlayer(QWidget):
 	def apply_custom_theme(self):
@@ -459,9 +496,22 @@ class YouTubePlayer(QWidget):
 	def init_ui(self):
 		layout = QGridLayout()
 
+		# 建立一個橫向容器來放 QLineEdit 和瀏覽按鈕
+		input_layout = QHBoxLayout()
+
+		# 原本的網址輸入欄位
 		self.url_input = QLineEdit()
 		self.url_input.setPlaceholderText("輸入 YouTube 網址或播放清單網址")
-		layout.addWidget(self.url_input, 0, 0)  # 橫跨三欄
+		input_layout.addWidget(self.url_input)
+
+		# 新增「瀏覽」按鈕
+		self.browse_button = QPushButton("📂 瀏覽")
+		self.browse_button.clicked.connect(self.browse_local_file)
+		input_layout.addWidget(self.browse_button)
+
+		# 把整個橫向區塊加到主 layout 上（佔一列）
+		layout.addLayout(input_layout, 0, 0)  # ⬅️ 第 0 行、橫跨三欄
+
 
 		# 第一列按鈕
 		self.load_button = QPushButton("🔍 搜尋")
@@ -534,8 +584,12 @@ class YouTubePlayer(QWidget):
 		layout.addWidget(self.current_title, 5, 1, 1, 2)
 
 		# 歌曲總數顯示
-		self.current_length = QLabel(f"歌曲數量：{self.current_index + 1 % self.playlist_length if self.playlist_length > 0 else 0} / {self.playlist_length}")
-		layout.addWidget(self.current_length, 6, 0, 1, 2)
+		self.current_length = QLabel(f"歌曲數量：0 / 0")
+		layout.addWidget(self.current_length, 6, 0)
+
+		self.export_playlist = QPushButton("📤 匯出歌單")
+		self.export_playlist.clicked.connect(self.export_playlist_to_file)
+		layout.addWidget(self.export_playlist, 6, 1)
 
 		self.clear_button = QPushButton("⏏️ 清除歌單")
 		self.clear_button.clicked.connect(self.clear_playlist)
@@ -560,6 +614,33 @@ class YouTubePlayer(QWidget):
 		self.loader_thread.finished.connect(self.on_playlist_loaded)
 		self.loader_thread.start()
 
+	def load_playlist_from_file(self, file_path):
+		if file_path.endswith('.m3u') or file_path.endswith('.txt'):
+			playlist = []
+			with open(file_path, 'r', encoding='utf-8') as f:
+				lines = [line.strip() for line in f if line.strip() and not line.startswith("#EXTM3U")]
+
+			i = 0
+			while i < len(lines):
+				if lines[i].startswith("#EXTINF:"):
+					title = lines[i].split(",", 1)[1] if "," in lines[i] else "未知標題"
+					i += 1
+					if i < len(lines):
+						url = lines[i]
+						playlist.append({'title': title, 'url': url})
+						self.list_widget.addItem(title)
+				i += 1
+
+			self.playlist.extend(playlist)
+			self.update_playlist_status()  # 更新歌曲數量顯示
+			return
+
+		title = os.path.basename(file_path)
+		self.playlist.append({'title': title, 'url': file_path})
+		self.list_widget.addItem(title)
+
+		self.update_playlist_status()  # 更新歌曲數量顯示
+
 	def on_playlist_loaded(self, playlist, is_keyword):
 		if is_keyword:
 			dialog = SearchResultsDialog(playlist)  # search_results 是 [{'title':..., 'url':...}, ...]
@@ -573,8 +654,7 @@ class YouTubePlayer(QWidget):
 				self.playlist.append(item)
 				self.list_widget.addItem(item['title'])
 
-		self.playlist_length = len(self.playlist)
-		self.current_length.setText(f"歌曲數量：{self.current_index + 1 % self.playlist_length if self.playlist_length > 0 else 0} / {self.playlist_length}")
+		self.update_playlist_status()  # 更新歌曲數量顯示
 
 	def clear_playlist(self):
 		self.player.stop()  # 停止當前播放（如有）
@@ -582,9 +662,12 @@ class YouTubePlayer(QWidget):
 
 		self.playlist.clear()  # 清除內部播放清單
 		self.list_widget.clear()  # 清空顯示列表
-		self.playlist_length = 0
 		self.current_index = 0
 		self.current_title.setText(" ")
+		self.update_playlist_status()  # 更新歌曲數量顯示
+
+	def update_playlist_status(self):
+		self.playlist_length = len(self.playlist)
 		self.current_length.setText(f"歌曲數量：{self.current_index + 1 % self.playlist_length if self.playlist_length > 0 else 0} / {self.playlist_length}")
 
 		
@@ -606,6 +689,8 @@ class YouTubePlayer(QWidget):
 		self.music_thread.play_success.connect(self.handle_play_success)
 		self.music_thread.play_failed.connect(self.handle_play_failed)
 		self.music_thread.start()
+
+		self.update_playlist_status()  # 更新播放清單顯示
 
 	def handle_play_success(self, media_path):
 		# 串流（http）或本地檔案都可以用 media_new
@@ -705,6 +790,27 @@ class YouTubePlayer(QWidget):
 				3000
 			)
 
+	def export_playlist_to_file(self):
+		if not self.playlist:
+			QMessageBox.warning(self, "沒有歌曲", "播放清單是空的，無法匯出。")
+			return
+
+		ExportPlaylistDialog(self.playlist, self)
+
+	def browse_local_file(self):
+		file_path, _ = QFileDialog.getOpenFileName(
+			self,
+			"選擇音樂或播放清單檔案",
+			"",
+			"所有支援檔案 (*.mp3 *.wav *.m4a *.flac *.ogg *.m3u *.txt);;"
+			"音訊檔案 (*.mp3 *.wav *.m4a *.flac *.ogg);;"
+			"播放清單 (*.m3u *.txt)"
+		)
+		if file_path:
+			self.load_playlist_from_file(file_path)
+
+
+
 
 	def change_volume(self, value):
 		self.player.audio_set_volume(value)
@@ -721,8 +827,8 @@ class YouTubePlayer(QWidget):
 		row = self.list_widget.currentRow()
 		if row != -1:
 			self.current_index = row
-			self.current_length.setText(f"歌曲數量：{self.current_index + 1 % self.playlist_length if self.playlist_length > 0 else 0} / {self.playlist_length}")
 			self.play_music()
+			self.update_playlist_status()  # 更新歌曲數量顯示
 
 	def seek_position(self, position):
 		if self.player.get_length() > 0:
