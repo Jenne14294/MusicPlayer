@@ -33,7 +33,7 @@
 
 ### ✅ 安裝執行檔（建議使用者方式）
 
-1. 前往 [Releases](https://github.com/yourname/Youtube-Music-Player/releases) 下載 `.zip`
+1. 前往 [Releases](https://github.com/Jenne14294/MusicPlayer/releases) 下載 `.zip`
 2. 解壓後執行 `Youtube Player.exe` 即可使用（無需安裝）
 
 ## 📝 播放清單格式說明
