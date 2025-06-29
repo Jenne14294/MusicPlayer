@@ -318,7 +318,7 @@ class PlaylistLoader(QThread):
 		self.finished.emit(playlist, self.is_keyword)
 
 class MusicPlayerThread(QThread):
-	play_success = pyqtSignal(str)  # 成功串流或下載後回傳媒體路徑（串流為 URL，下載為本地檔案）
+	play_success = pyqtSignal(str, bool)  # 成功串流或下載後回傳媒體路徑（串流為 URL，下載為本地檔案）
 	play_failed = pyqtSignal(str)   # 播放錯誤訊息
 
 	def __init__(self, entry, parent=None):
@@ -347,26 +347,26 @@ class MusicPlayerThread(QThread):
 		}
 		
 		if not self.entry['url'].startswith("https://"):
-			self.play_success.emit(self.entry['url'])
+			self.play_success.emit(self.entry['url'], False)
 
+		else:
+			try:
+				with YoutubeDL(ydl_opts) as ydl:
+					info = ydl.extract_info(self.entry['url'], download=False)
+					stream_url = info['url']
+					time.sleep(3)
+					self.play_success.emit(stream_url, False)
+					return
+			except Exception as e:
+				print("串流失敗，改為下載音訊播放")
 
-		try:
-			with YoutubeDL(ydl_opts) as ydl:
-				info = ydl.extract_info(self.entry['url'], download=False)
-				stream_url = info['url']
-				time.sleep(3)
-				self.play_success.emit(stream_url)
-				return
-		except Exception as e:
-			print("串流失敗，改為下載音訊播放")
-
-		try:
-			with YoutubeDL(ydl_opts) as ydl:
-				info = ydl.extract_info(self.entry['url'], download=True)
-				self.temp_filepath = ydl.prepare_filename(info)
-				self.play_success.emit(os.path.abspath(self.temp_filepath))
-		except Exception as e:
-			self.play_failed.emit(f"播放失敗：{e}")
+			try:
+				with YoutubeDL(ydl_opts) as ydl:
+					info = ydl.extract_info(self.entry['url'], download=True)
+					self.temp_filepath = ydl.prepare_filename(info)
+					self.play_success.emit(os.path.abspath(self.temp_filepath), True)
+			except Exception as e:
+				self.play_failed.emit(f"播放失敗：{e}")
 
 class LyricsWorker(QThread):
 	signal_done = pyqtSignal(str)  # 發送歌詞網址或 None
@@ -614,30 +614,31 @@ class YouTubePlayer(QWidget):
 		self.loader_thread.finished.connect(self.on_playlist_loaded)
 		self.loader_thread.start()
 
-	def load_playlist_from_file(self, file_path):
-		if file_path.endswith('.m3u') or file_path.endswith('.txt'):
-			playlist = []
-			with open(file_path, 'r', encoding='utf-8') as f:
-				lines = [line.strip() for line in f if line.strip() and not line.startswith("#EXTM3U")]
+	def load_playlist_from_file(self, file_list):
+		for file_path in file_list:
+			if file_path.endswith('.m3u') or file_path.endswith('.txt'):
+				playlist = []
+				with open(file_path, 'r', encoding='utf-8') as f:
+					lines = [line.strip() for line in f if line.strip() and not line.startswith("#EXTM3U")]
 
-			i = 0
-			while i < len(lines):
-				if lines[i].startswith("#EXTINF:"):
-					title = lines[i].split(",", 1)[1] if "," in lines[i] else "未知標題"
+				i = 0
+				while i < len(lines):
+					if lines[i].startswith("#EXTINF:"):
+						title = lines[i].split(",", 1)[1] if "," in lines[i] else "未知標題"
+						i += 1
+						if i < len(lines):
+							url = lines[i]
+							playlist.append({'title': title, 'url': url})
+							self.list_widget.addItem(title)
 					i += 1
-					if i < len(lines):
-						url = lines[i]
-						playlist.append({'title': title, 'url': url})
-						self.list_widget.addItem(title)
-				i += 1
 
-			self.playlist.extend(playlist)
-			self.update_playlist_status()  # 更新歌曲數量顯示
-			return
+				self.playlist.extend(playlist)
+				self.update_playlist_status()  # 更新歌曲數量顯示
+				return
 
-		title = os.path.basename(file_path)
-		self.playlist.append({'title': title, 'url': file_path})
-		self.list_widget.addItem(title)
+			title = os.path.basename(file_path)
+			self.playlist.append({'title': title, 'url': file_path})
+			self.list_widget.addItem(title)
 
 		self.update_playlist_status()  # 更新歌曲數量顯示
 
@@ -692,14 +693,14 @@ class YouTubePlayer(QWidget):
 
 		self.update_playlist_status()  # 更新播放清單顯示
 
-	def handle_play_success(self, media_path):
+	def handle_play_success(self, media_path, is_downloaded=False):
 		# 串流（http）或本地檔案都可以用 media_new
 		media = self.instance.media_new(media_path)
 		self.player.set_media(media)
 		self.player.play()
 		
 		# 如果是下載的檔案，記得保存 temp 檔路徑以便清理
-		if not media_path.startswith("http"):
+		if not media_path.startswith("http") and is_downloaded:
 			self.temp_filepath = media_path
 
 	def handle_play_failed(self, msg):
@@ -798,7 +799,7 @@ class YouTubePlayer(QWidget):
 		ExportPlaylistDialog(self.playlist, self)
 
 	def browse_local_file(self):
-		file_path, _ = QFileDialog.getOpenFileName(
+		file_path, _ = QFileDialog.getOpenFileNames(
 			self,
 			"選擇音樂或播放清單檔案",
 			"",
