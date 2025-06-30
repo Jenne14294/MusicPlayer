@@ -695,6 +695,10 @@ class YouTubePlayer(QWidget):
 
 	def handle_play_success(self, media_path, is_downloaded=False):
 		# 串流（http）或本地檔案都可以用 media_new
+		if not os.path.exists(media_path):
+			QMessageBox.critical(self, "錯誤", f"無法播放 {media_path}，\n請確認網址或檔案路徑是否正確。")
+			return
+
 		media = self.instance.media_new(media_path)
 		self.player.set_media(media)
 		self.player.play()
