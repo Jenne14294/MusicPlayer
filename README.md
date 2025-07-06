@@ -67,7 +67,7 @@ https://www.youtube.com/watch?v=xxxxxx2
 | 歌詞查詢         | Genius API        |
 | 系統托盤         | QSystemTrayIcon   |
 
-⚠️ **注意：需要安裝 VLC 播放器（建議安裝官方版 VLC，python-vlc 會呼叫 VLC 執行檔）**
+⚠️ **注意：需要安裝 64 位元 VLC 播放器（建議安裝官方版 VLC，python-vlc 會呼叫 VLC 執行檔）**
 
 ---
 
