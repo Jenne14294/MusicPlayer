@@ -7,7 +7,7 @@ import google.generativeai as gemini #gemini api
 import requests
 import webbrowser
 
-from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QLineEdit, QListWidget, QLabel, QSlider, QStyle, QGridLayout, QSystemTrayIcon, QMenu, QAction, QWidgetAction, QHBoxLayout, QMessageBox, QDialog, QVBoxLayout, QListWidgetItem, QFileDialog
+from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QLineEdit, QListWidget, QLabel, QSlider, QStyle, QGridLayout, QSystemTrayIcon, QMenu, QAction, QWidgetAction, QHBoxLayout, QMessageBox, QDialog, QVBoxLayout, QListWidgetItem, QFileDialog, QSizePolicy
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt5.QtGui import QIcon, QFontMetrics
 from yt_dlp import YoutubeDL
@@ -169,27 +169,36 @@ class MarqueeLabel(QLabel):
 	def __init__(self, text='', parent=None):
 		super().__init__(text, parent)
 		self.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+		self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+		self.setMinimumWidth(50)
 		self.offset = 0
 		self.timer = QTimer(self)
 		self.timer.timeout.connect(self.scrollText)
-		self.setFixedWidth(300)
 		self.fullText = text
 		self.scrolling = False
 		self.setText(text)
 
 	def setText(self, text):
 		self.fullText = text
-		metrics = QFontMetrics(self.font())
-		text_width = metrics.width(text)
-
 		self.offset = 0
 		self.timer.stop()
 		self.scrolling = False
 
-		if text_width > self.width():
-			self.timer.start(300)  # 啟動滾動
-			self.scrolling = True
+		# 立即檢查是否需要滾動
+		self.checkScrolling()
 		super().setText(text)
+
+	def checkScrolling(self):
+		metrics = QFontMetrics(self.font())
+		text_width = metrics.width(self.fullText)
+
+		if text_width > self.width():
+			self.timer.start(300)
+			self.scrolling = True
+		else:
+			self.timer.stop()
+			self.scrolling = False
+			super().setText(self.fullText)
 
 	def scrollText(self):
 		if not self.scrolling:
@@ -197,6 +206,12 @@ class MarqueeLabel(QLabel):
 		text = self.fullText + "     "
 		self.offset = (self.offset + 1) % len(text)
 		super().setText(text[self.offset:] + text[:self.offset])
+
+	def resizeEvent(self, event):
+		# 視窗改變時重新判斷是否需要滾動
+		self.checkScrolling()
+		super().resizeEvent(event)
+
 	
 class SongItemWidget(QWidget):
 	def __init__(self, index, title, parent=None):
