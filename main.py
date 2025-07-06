@@ -283,8 +283,8 @@ class SearchResultsDialog(QDialog):
 		self.list_widget.setSelectionMode(QListWidget.SingleSelection)
 
 		# 限制只顯示前五個
-		for item in results:
-			list_item = QListWidgetItem(item['title'])
+		for i, item in enumerate(results):
+			list_item = QListWidgetItem(f"{i + 1}. {item['title']}")
 			list_item.setData(Qt.UserRole, item['url'])
 			self.list_widget.addItem(list_item)
 

@@ -63,9 +63,11 @@ https://www.youtube.com/watch?v=xxxxxx2
 | YouTube 資訊擷取 | yt_dlp            |
 | 音訊播放         | python-vlc        |
 | 串流備援下載     | ffmpeg            |
-| AI 歌名辨識      | Gemini API |
+| AI 歌名辨識      | Gemini API        |
 | 歌詞查詢         | Genius API        |
 | 系統托盤         | QSystemTrayIcon   |
+
+⚠️ **注意：需要安裝 VLC 播放器（建議安裝官方版 VLC，python-vlc 會呼叫 VLC 執行檔）**
 
 ---
 
