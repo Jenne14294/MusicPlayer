@@ -428,7 +428,7 @@ class ExportPlaylistDialog(QDialog):
 			self,
 			"匯出播放清單",
 			"playlist.m3u",
-			"M3U 檔案 (*.m3u);;文字檔 (*.txt)"
+			"M3U 檔案 (*.m3u)"
 		)
 
 		if not path:

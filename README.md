@@ -1,6 +1,6 @@
 # 🎵 YouTube 音樂播放器
 
-這是一款基於 Python 和 PyQt5 打造的桌面音樂播放器，支援播放 YouTube 音訊，整合播放清單管理、AI 標題解析、歌詞查詢與系統托盤控制等功能。可同時播放線上與本地音訊，支援 `.m3u` / `.txt` 播放清單。
+這是一款基於 Python 和 PyQt5 打造的桌面音樂播放器，支援播放 YouTube 音訊，整合播放清單管理、AI 標題解析、歌詞查詢與系統托盤控制等功能。可同時播放線上與本地音訊，支援 `.m3u` 播放清單。
 
 ---
 
@@ -9,7 +9,7 @@
 - 🔗 **多種播放來源支援**：
   - ✅ YouTube 影片、播放清單、頻道網址
   - ✅ 本地音訊檔案（`.mp3`, `.wav`, `.m4a`, `.flac`, `.ogg`）
-  - ✅ `.m3u` / `.txt` 播放清單匯入
+  - ✅ `.m3u` 播放清單匯入
 
 - 🎶 **播放清單管理**：
   - 支援儲存 / 匯出 `.m3u` 格式
@@ -44,12 +44,6 @@
 #EXTINF:-1,歌曲名稱1
 https://www.youtube.com/watch?v=xxxxxx1
 #EXTINF:-1,歌曲名稱2
-https://www.youtube.com/watch?v=xxxxxx2
-```
-
-### `.txt` 播放清單範例：
-```
-https://www.youtube.com/watch?v=xxxxxx1
 https://www.youtube.com/watch?v=xxxxxx2
 ```
 
