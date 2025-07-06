@@ -198,6 +198,35 @@ class MarqueeLabel(QLabel):
 		self.offset = (self.offset + 1) % len(text)
 		super().setText(text[self.offset:] + text[:self.offset])
 	
+class SongItemWidget(QWidget):
+	def __init__(self, index, title, parent=None):
+		super().__init__(parent)
+		self.index = index
+		self.title = title
+
+		layout = QHBoxLayout(self)
+		layout.setContentsMargins(2, 2, 2, 2)
+
+		self.btn_up = QPushButton("⬆️")
+		self.btn_up.setFixedWidth(36)
+
+		self.btn_down = QPushButton("⬇️")
+		self.btn_down.setFixedWidth(36)
+		
+		self.btn_delete = QPushButton("🗑️")
+		self.btn_delete.setFixedWidth(36)
+
+		#self.btn_more = QPushButton("⋯")
+		#elf.btn_more.setFixedWidth(36)
+
+		self.label = QLabel(f"{index+1}. {title}")
+
+		layout.addWidget(self.btn_up)
+		layout.addWidget(self.btn_down)
+		layout.addWidget(self.btn_delete)
+		#layout.addWidget(self.btn_more)
+		layout.addWidget(self.label)
+
 class SearchResultsDialog(QDialog):
 	def apply_custom_theme(self):
 		self.setStyleSheet("""
@@ -388,37 +417,37 @@ class LyricsWorker(QThread):
 			self.signal_done.emit(None)
 
 class ExportPlaylistDialog(QDialog):
-    def __init__(self, playlist, parent=None):
-        super().__init__(parent)
-        self.playlist = playlist
-        self.save_playlist()
+	def __init__(self, playlist, parent=None):
+		super().__init__(parent)
+		self.playlist = playlist
+		self.save_playlist()
 
-    def save_playlist(self):
-        # 出現「另存為」對話框
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            "匯出播放清單",
-            "playlist.m3u",
-            "M3U 檔案 (*.m3u);;文字檔 (*.txt)"
-        )
+	def save_playlist(self):
+		# 出現「另存為」對話框
+		path, _ = QFileDialog.getSaveFileName(
+			self,
+			"匯出播放清單",
+			"playlist.m3u",
+			"M3U 檔案 (*.m3u);;文字檔 (*.txt)"
+		)
 
-        if not path:
-            return  # 使用者取消
+		if not path:
+			return  # 使用者取消
 
-        # 確保副檔名
-        if not path.lower().endswith(".m3u"):
-            path += ".m3u"
+		# 確保副檔名
+		if not path.lower().endswith(".m3u"):
+			path += ".m3u"
 
-        try:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write("#EXTM3U\n")
-                for item in self.playlist:
-                    f.write(f"#EXTINF:-1,{item['title']}\n")
-                    f.write(f"{item['url']}\n")
+		try:
+			with open(path, "w", encoding="utf-8") as f:
+				f.write("#EXTM3U\n")
+				for item in self.playlist:
+					f.write(f"#EXTINF:-1,{item['title']}\n")
+					f.write(f"{item['url']}\n")
 
-            QMessageBox.information(self, "匯出成功", f"播放清單已儲存到：\n{path}")
-        except Exception as e:
-            QMessageBox.critical(self, "匯出失敗", f"無法儲存播放清單：\n{e}")
+			QMessageBox.information(self, "匯出成功", f"播放清單已儲存到：\n{path}")
+		except Exception as e:
+			QMessageBox.critical(self, "匯出失敗", f"無法儲存播放清單：\n{e}")
 
 class YouTubePlayer(QWidget):
 	def apply_custom_theme(self):
@@ -629,18 +658,32 @@ class YouTubePlayer(QWidget):
 						if i < len(lines):
 							url = lines[i]
 							playlist.append({'title': title, 'url': url})
-							self.list_widget.addItem(title)
 					i += 1
+			else:
+				# 單純本地檔案
+				title = os.path.basename(file_path)
+				playlist = [{'title': title, 'url': file_path}]
 
-				self.playlist.extend(playlist)
-				self.update_playlist_status()  # 更新歌曲數量顯示
-				return
+			# 將讀到的這個檔案的歌曲加入播放清單並顯示
+			for song in playlist:
+				item = QListWidgetItem()
+				idx = len(self.playlist)  # 當前在清單最後
+				widget = SongItemWidget(idx, song['title'])
 
-			title = os.path.basename(file_path)
-			self.playlist.append({'title': title, 'url': file_path})
-			self.list_widget.addItem(title)
+				# 綁定功能按鈕
+				widget.btn_up.clicked.connect(lambda _, i=idx: self.move_song_up(i))
+				widget.btn_down.clicked.connect(lambda _, i=idx: self.move_song_down(i))
+				widget.btn_delete.clicked.connect(lambda _, i=idx: self.delete_song(i))
+				#widget.btn_more.clicked.connect(lambda _, i=idx: self.more_options(i))
+
+				item.setSizeHint(widget.sizeHint())
+				self.list_widget.addItem(item)
+				self.list_widget.setItemWidget(item, widget)
+
+				self.playlist.append(song)
 
 		self.update_playlist_status()  # 更新歌曲數量顯示
+
 
 	def on_playlist_loaded(self, playlist, is_keyword):
 		if is_keyword:
@@ -651,9 +694,22 @@ class YouTubePlayer(QWidget):
 					self.playlist.append(item)
 					self.list_widget.addItem(item['title'])
 		else:
-			for item in playlist:
-				self.playlist.append(item)
-				self.list_widget.addItem(item['title'])
+			for i, song in enumerate(playlist):
+				item = QListWidgetItem()
+				widget = SongItemWidget(i, song['title'])
+
+				# 綁定按鈕的信號（你可以傳當前索引或歌曲ID）
+				widget.btn_up.clicked.connect(lambda _, idx=i: self.move_song_up(idx))
+				widget.btn_down.clicked.connect(lambda _, idx=i: self.move_song_down(idx))
+				widget.btn_delete.clicked.connect(lambda _, idx=i: self.delete_song(idx))
+				#widget.btn_more.clicked.connect(lambda _, idx=i: self.more_options(idx))
+
+				item.setSizeHint(widget.sizeHint())
+				self.list_widget.addItem(item)
+				self.list_widget.setItemWidget(item, widget)
+
+				self.playlist.append(song)
+
 
 		self.update_playlist_status()  # 更新歌曲數量顯示
 
@@ -671,7 +727,46 @@ class YouTubePlayer(QWidget):
 		self.playlist_length = len(self.playlist)
 		self.current_length.setText(f"歌曲數量：{self.current_index + 1 % self.playlist_length if self.playlist_length > 0 else 0} / {self.playlist_length}")
 
-		
+	def move_song_up(self, idx):
+		previous_song_index = (idx - 1) % len(self.playlist)
+		self.swap_songs(idx, previous_song_index)	
+
+	def move_song_down(self, idx):
+		next_song_index = (idx + 1) % len(self.playlist)
+		self.swap_songs(idx, next_song_index)
+
+	def swap_songs(self, operator_idx, operation_idx):
+		temp_song = self.playlist[operation_idx]
+		self.playlist[operation_idx] = self.playlist[operator_idx]
+		self.playlist[operator_idx] = temp_song
+
+		self.refresh_playlist_ui()
+	
+	def delete_song(self, idx):
+		self.playlist.pop(idx)
+		self.refresh_playlist_ui()
+
+
+
+	def refresh_playlist_ui(self):
+		"""清空並重新生成歌單 UI"""
+		self.list_widget.clear()
+
+		for i, song in enumerate(self.playlist):
+			item = QListWidgetItem()
+			widget = SongItemWidget(i, song['title'])
+
+			# 綁定按鈕事件
+			widget.btn_up.clicked.connect(lambda _, idx=i: self.move_song_up(idx))
+			widget.btn_down.clicked.connect(lambda _, idx=i: self.move_song_down(idx))
+			widget.btn_delete.clicked.connect(lambda _, idx=i: self.delete_song(idx))
+			#widget.btn_more.clicked.connect(lambda _, idx=i: self.more_options(idx))
+
+			item.setSizeHint(widget.sizeHint())
+			self.list_widget.addItem(item)
+			self.list_widget.setItemWidget(item, widget)
+
+		self.update_playlist_status()
 
 	def play_music(self):
 		if not self.playlist:
@@ -722,11 +817,6 @@ class YouTubePlayer(QWidget):
 				print(f"刪除檔案失敗：{e}")
 		self.temp_filepath = None
 
-	def update_playlist_widget(self):
-		self.list_widget.clear()
-
-		for video in self.playlist:
-			self.list_widget.addItem(video["title"])
 
 	def toggle_pause(self):
 		if self.player.is_playing():
@@ -765,7 +855,7 @@ class YouTubePlayer(QWidget):
 
 	def toggle_shuffle(self):
 		random.shuffle(self.playlist)
-		self.update_playlist_widget()
+		self.refresh_playlist_ui()
 
 	def search_lyrics(self):
 		self.tray_icon.showMessage(
