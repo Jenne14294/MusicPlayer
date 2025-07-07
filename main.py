@@ -9,7 +9,7 @@ import webbrowser
 
 from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QLineEdit, QListWidget, QLabel, QSlider, QStyle, QGridLayout, QSystemTrayIcon, QMenu, QAction, QWidgetAction, QHBoxLayout, QMessageBox, QDialog, QVBoxLayout, QListWidgetItem, QFileDialog, QSizePolicy
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
-from PyQt5.QtGui import QIcon, QFontMetrics
+from PyQt5.QtGui import QIcon, QFontMetrics, QCursor
 from yt_dlp import YoutubeDL
 
 
@@ -212,7 +212,6 @@ class MarqueeLabel(QLabel):
 		self.checkScrolling()
 		super().resizeEvent(event)
 
-	
 class SongItemWidget(QWidget):
 	def __init__(self, index, title, parent=None):
 		super().__init__(parent)
@@ -231,15 +230,15 @@ class SongItemWidget(QWidget):
 		self.btn_delete = QPushButton("🗑️")
 		self.btn_delete.setFixedWidth(36)
 
-		#self.btn_more = QPushButton("⋯")
-		#elf.btn_more.setFixedWidth(36)
+		self.btn_more = QPushButton("⋯")
+		self.btn_more.setFixedWidth(36)
 
 		self.label = QLabel(f"{index+1}. {title}")
 
 		layout.addWidget(self.btn_up)
 		layout.addWidget(self.btn_down)
 		layout.addWidget(self.btn_delete)
-		#layout.addWidget(self.btn_more)
+		layout.addWidget(self.btn_more)
 		layout.addWidget(self.label)
 
 class SearchResultsDialog(QDialog):
@@ -411,6 +410,32 @@ class MusicPlayerThread(QThread):
 					self.play_success.emit(os.path.abspath(self.temp_filepath), True)
 			except Exception as e:
 				self.play_failed.emit(f"播放失敗：{e}")
+
+class DownloadThread(QThread):
+	download_finished = pyqtSignal(bool, str)
+
+	def __init__(self, url, save_path, parent=None):
+		super().__init__(parent)
+		self.url = url
+		self.save_path = save_path
+
+	def run(self):
+		try:
+			ydl_opts = {
+				'format': 'bestaudio/best',
+				'outtmpl': self.save_path,
+				'postprocessors': [{
+					'key': 'FFmpegExtractAudio',
+					'preferredcodec': 'mp3',
+					'preferredquality': '192',
+				}],
+				'quiet': True,
+			}
+			with YoutubeDL(ydl_opts) as ydl:
+				ydl.download([self.url])
+			self.download_finished.emit(True, self.save_path)
+		except Exception as e:
+			self.download_finished.emit(False, str(e))
 
 class LyricsWorker(QThread):
 	signal_done = pyqtSignal(str)  # 發送歌詞網址或 None
@@ -660,7 +685,7 @@ class YouTubePlayer(QWidget):
 
 	def load_playlist_from_file(self, file_list):
 		for file_path in file_list:
-			if file_path.endswith('.m3u') or file_path.endswith('.txt'):
+			if file_path.endswith('.m3u'):
 				playlist = []
 				with open(file_path, 'r', encoding='utf-8') as f:
 					lines = [line.strip() for line in f if line.strip() and not line.startswith("#EXTM3U")]
@@ -681,22 +706,10 @@ class YouTubePlayer(QWidget):
 
 			# 將讀到的這個檔案的歌曲加入播放清單並顯示
 			for song in playlist:
-				item = QListWidgetItem()
-				idx = len(self.playlist)  # 當前在清單最後
-				widget = SongItemWidget(idx, song['title'])
-
-				# 綁定功能按鈕
-				widget.btn_up.clicked.connect(lambda _, i=idx: self.move_song_up(i))
-				widget.btn_down.clicked.connect(lambda _, i=idx: self.move_song_down(i))
-				widget.btn_delete.clicked.connect(lambda _, i=idx: self.delete_song(i))
-				#widget.btn_more.clicked.connect(lambda _, i=idx: self.more_options(i))
-
-				item.setSizeHint(widget.sizeHint())
-				self.list_widget.addItem(item)
-				self.list_widget.setItemWidget(item, widget)
-
 				self.playlist.append(song)
 
+		
+		self.refresh_playlist_ui()  # 刷新 UI 顯示	
 		self.update_playlist_status()  # 更新歌曲數量顯示
 
 
@@ -707,26 +720,8 @@ class YouTubePlayer(QWidget):
 				selected = dialog.get_selected_items()
 				for item in selected:
 					self.playlist.append(item)
-					self.list_widget.addItem(item['title'])
-		else:
-			for i, song in enumerate(playlist):
-				item = QListWidgetItem()
-				widget = SongItemWidget(i, song['title'])
 
-				# 綁定按鈕的信號（你可以傳當前索引或歌曲ID）
-				widget.btn_up.clicked.connect(lambda _, idx=i: self.move_song_up(idx))
-				widget.btn_down.clicked.connect(lambda _, idx=i: self.move_song_down(idx))
-				widget.btn_delete.clicked.connect(lambda _, idx=i: self.delete_song(idx))
-				#widget.btn_more.clicked.connect(lambda _, idx=i: self.more_options(idx))
-
-				item.setSizeHint(widget.sizeHint())
-				self.list_widget.addItem(item)
-				self.list_widget.setItemWidget(item, widget)
-
-				self.playlist.append(song)
-
-
-		self.update_playlist_status()  # 更新歌曲數量顯示
+		self.refresh_playlist_ui()
 
 	def clear_playlist(self):
 		self.player.stop()  # 停止當前播放（如有）
@@ -761,7 +756,23 @@ class YouTubePlayer(QWidget):
 		self.playlist.pop(idx)
 		self.refresh_playlist_ui()
 
+	def more_options(self, idx):
+		"""更多選項（如刪除、上移、下移）"""
+		menu = QMenu(self)
 
+		download_action = QAction("⬇️ 下載")
+		download_action.triggered.connect(lambda: self.download_select_song(idx))
+		menu.addAction(download_action)
+
+		sshare_song_action = QAction("📄 歌詞")
+		sshare_song_action.triggered.connect(lambda: self.search_lyrics(idx))
+		menu.addAction(sshare_song_action)
+
+		share_song_action = QAction("ℹ️ 分享")
+		share_song_action.triggered.connect(lambda: self.copy_selected_song_url(idx))
+		menu.addAction(share_song_action)
+
+		menu.exec_(QCursor.pos())
 
 	def refresh_playlist_ui(self):
 		"""清空並重新生成歌單 UI"""
@@ -775,13 +786,55 @@ class YouTubePlayer(QWidget):
 			widget.btn_up.clicked.connect(lambda _, idx=i: self.move_song_up(idx))
 			widget.btn_down.clicked.connect(lambda _, idx=i: self.move_song_down(idx))
 			widget.btn_delete.clicked.connect(lambda _, idx=i: self.delete_song(idx))
-			#widget.btn_more.clicked.connect(lambda _, idx=i: self.more_options(idx))
+			widget.btn_more.clicked.connect(lambda _, idx=i: self.more_options(idx))
 
 			item.setSizeHint(widget.sizeHint())
 			self.list_widget.addItem(item)
 			self.list_widget.setItemWidget(item, widget)
 
 		self.update_playlist_status()
+
+	def download_select_song(self, idx):
+		url = self.playlist[idx]['url']
+		title = self.playlist[idx]['title']
+
+		if not url.startswith("http"):
+			QMessageBox.warning(self, "無效的網址", "請選擇有效的 YouTube 網址或播放清單。")
+			return
+
+		# 先讓使用者選儲存路徑
+		save_path, _ = QFileDialog.getSaveFileName(
+			self,
+			"選擇儲存位置",
+			f"{title}.mp3",
+			"音訊檔案 (*.mp3)"
+		)
+		if not save_path:
+			return  # 使用者取消
+
+		# 啟動下載執行緒
+		self.download_thread = DownloadThread(url, save_path)
+		self.download_thread.download_finished.connect(self.on_download_finished)
+		self.download_thread.start()
+
+
+	def on_download_finished(self, success, message):
+		if success:
+			QMessageBox.information(self, "下載完成", f"音樂已儲存到：\n{message}")
+		else:
+			QMessageBox.warning(self, "下載失敗", f"發生錯誤：\n{message}")
+
+
+	def copy_selected_song_url(self, idx):
+		song = self.playlist[idx]
+		QApplication.clipboard().setText(f"透過 Youtube 音樂播放器分享這首歌給你：{song['title']}\n網址：{song['url']}")
+
+		self.tray_icon.showMessage(
+			"YouTube 音樂播放器",
+			"已將該歌曲複製到剪貼簿！",
+			QSystemTrayIcon.Information,
+			3000
+		)
 
 	def play_music(self):
 		if not self.playlist:
@@ -873,7 +926,7 @@ class YouTubePlayer(QWidget):
 		random.shuffle(self.playlist)
 		self.refresh_playlist_ui()
 
-	def search_lyrics(self):
+	def search_lyrics(self, selected_index=None):
 		self.tray_icon.showMessage(
 			"YouTube 音樂播放器",
 			"正在搜尋歌詞，找到會自動開啟網頁(可能會找到錯誤的歌曲)",
@@ -881,7 +934,9 @@ class YouTubePlayer(QWidget):
 			3000
 		)
 
-		current_song = self.playlist[self.current_index]["title"]
+		selected_index = self.current_index if not selected_index else selected_index
+
+		current_song = self.playlist[selected_index]["title"]
 		ai_title = AI_title()
 		true_title = ai_title.ask_ai(f"請給我這首歌的歌名 只要歌名就好\n{current_song}")
 
