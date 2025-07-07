@@ -670,7 +670,7 @@ class YouTubePlayer(QWidget):
 		self.volume_slider.valueChanged.connect(self.change_volume)
 		layout.addWidget(self.volume_slider, 3, 1)
 
-		self.mute_button = QPushButton("🔇 取消靜音")
+		self.mute_button = QPushButton("🔇 靜音")
 		self.mute_button.setCheckable(True)
 		self.mute_button.clicked.connect(self.toggle_mute)
 		layout.addWidget(self.mute_button, 3, 2)
@@ -1042,7 +1042,7 @@ class YouTubePlayer(QWidget):
 
 	def toggle_mute(self):
 		muted = self.player.audio_get_mute()
-		self.mute_button.setText("🔇 取消靜音" if not muted else "🔊 切換靜音")
+		self.mute_button.setText("🔊 取消靜音" if not muted else "🔇 靜音")
 		self.tray_icon.update_mute_state(not muted)
 		self.player.audio_toggle_mute()
 
