@@ -437,6 +437,46 @@ class DownloadThread(QThread):
 		except Exception as e:
 			self.download_finished.emit(False, str(e))
 
+class PlaylistSearchDialog(QDialog):
+    def __init__(self, playlist, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("搜尋歌單")
+        self.resize(400, 300)
+
+        self.playlist = playlist
+
+        layout = QVBoxLayout(self)
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("輸入關鍵字…")
+        layout.addWidget(self.search_input)
+
+        self.list_widget = QListWidget()
+        layout.addWidget(self.list_widget)
+
+        btn_close = QPushButton("關閉")
+        btn_close.clicked.connect(self.close)
+        layout.addWidget(btn_close)
+
+        self.search_input.textChanged.connect(self.update_results)
+        self.list_widget.itemDoubleClicked.connect(self.select_item)
+
+    def update_results(self, keyword):
+        self.list_widget.clear()
+        keyword = keyword.lower()
+        for idx, song in enumerate(self.playlist):
+            if keyword in song['title'].lower():
+                item = QListWidgetItem(f"{idx+1}. {song['title']}")
+                item.setData(1, idx)  # 存下 index
+                self.list_widget.addItem(item)
+
+    def select_item(self, item):
+        idx = item.data(1)
+        self.accept()
+        self.selected_index = idx
+
+    def get_selected_index(self):
+        return getattr(self, 'selected_index', None)
+
 class LyricsWorker(QThread):
 	signal_done = pyqtSignal(str)  # 發送歌詞網址或 None
 
@@ -653,8 +693,17 @@ class YouTubePlayer(QWidget):
 		layout.addWidget(self.current_title, 5, 1, 1, 2)
 
 		# 歌曲總數顯示
+		playlist_layout = QHBoxLayout()
+
 		self.current_length = QLabel(f"歌曲數量：0 / 0")
-		layout.addWidget(self.current_length, 6, 0)
+		playlist_layout.addWidget(self.current_length)
+
+		self.search_playlist = QPushButton("🔍 查詢歌單")
+		self.search_playlist.clicked.connect(self.search_in_playlist)
+		playlist_layout.addWidget(self.search_playlist)
+
+		layout.addLayout(playlist_layout, 6, 0)  # 放在第六行，橫跨三欄
+		
 
 		self.export_playlist = QPushButton("📤 匯出歌單")
 		self.export_playlist.clicked.connect(self.export_playlist_to_file)
@@ -916,6 +965,8 @@ class YouTubePlayer(QWidget):
 		self.current_index = (self.current_index - 1 + len(self.playlist)) % len(self.playlist)
 		self.play_music()
 
+	
+
 	def toggle_loop(self):
 		self.loop = not self.loop
 		status = "🟢" if self.loop else "🟥"
@@ -956,6 +1007,13 @@ class YouTubePlayer(QWidget):
 				3000
 			)
 
+	def search_in_playlist(self):
+		dialog = PlaylistSearchDialog(self.playlist, self)
+		if dialog.exec_() == QDialog.Accepted:
+			idx = dialog.get_selected_index()
+			if idx is not None:
+				self.select_song(idx)  # 你自己的「播放第 i 首歌」的方法
+
 	def export_playlist_to_file(self):
 		if not self.playlist:
 			QMessageBox.warning(self, "沒有歌曲", "播放清單是空的，無法匯出。")
@@ -989,8 +1047,9 @@ class YouTubePlayer(QWidget):
 		self.player.audio_toggle_mute()
 
 
-	def select_song(self):
-		row = self.list_widget.currentRow()
+	def select_song(self, idx=None):
+		row = self.list_widget.currentRow() if idx is None else idx
+		
 		if row != -1:
 			self.current_index = row
 			self.play_music()
