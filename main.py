@@ -324,6 +324,105 @@ class SearchResultsDialog(QDialog):
 			})
 		return selected
 
+class EditSongsDialog(QDialog):
+	def apply_custom_theme(self):
+		self.setStyleSheet("""
+		QWidget {
+			background-color: #1e1e2f;
+			color: #ffffff;
+			font-family: "Microsoft JhengHei";
+			font-size: 14px;
+		}
+		QPushButton {
+			background-color: #2e2e3f;
+			border: 1px solid #555;
+			border-radius: 6px;
+			padding: 6px;
+		}
+		QPushButton:hover {
+			background-color: #3e3e5f;
+		}
+		QPushButton:pressed {
+			background-color: #5e5e7f;
+		}
+		QLineEdit {
+			background-color: #2a2a3a;
+			border: 1px solid #555;
+			border-radius: 4px;
+			padding: 4px;
+		}
+		""")
+
+	def __init__(self, idx, parent=None):
+		super().__init__(parent)
+		self.setWindowTitle("編輯歌曲")
+		self.resize(400, 180)
+		self.apply_custom_theme()
+
+		self.parent = parent
+		self.idx = idx
+		self.now_song = parent.playlist[idx] if parent else {"title": "", "url": ""}
+
+		layout = QVBoxLayout(self)
+
+		# 標題輸入
+		hl_title = QHBoxLayout()
+		hl_title.addWidget(QLabel("標題："))
+		self.title_edit = QLineEdit(self.now_song.get("title", ""))
+		hl_title.addWidget(self.title_edit)
+		layout.addLayout(hl_title)
+
+		# 網址輸入 + 瀏覽
+		hl_url = QHBoxLayout()
+		hl_url.addWidget(QLabel("網址/路徑："))
+		self.url_edit = QLineEdit(self.now_song.get("url", ""))
+		btn_browse = QPushButton("瀏覽")
+		btn_browse.clicked.connect(self.browse_file)
+		hl_url.addWidget(self.url_edit)
+		hl_url.addWidget(btn_browse)
+		layout.addLayout(hl_url)
+
+		# 按鈕區
+		hl_buttons = QHBoxLayout()
+		btn_save = QPushButton("儲存")
+		btn_cancel = QPushButton("取消")
+		btn_preview = QPushButton("預覽")
+		hl_buttons.addWidget(btn_save)
+		hl_buttons.addWidget(btn_cancel)
+		hl_buttons.addWidget(btn_preview)
+		layout.addLayout(hl_buttons)
+
+		btn_save.clicked.connect(self.save_changes)
+		btn_cancel.clicked.connect(self.reject)
+		btn_preview.clicked.connect(self.preview)
+
+	def browse_file(self):
+		file_path, _ = QFileDialog.getOpenFileName(
+			self, "選擇音樂檔案", "",
+			"音訊檔案 (*.mp3 *.wav *.m4a *.flac *.ogg *.m3u *.txt);;所有檔案 (*)"
+		)
+		if file_path:
+			self.url_edit.setText(file_path)
+
+	def save_changes(self):
+		new_title = self.title_edit.text().strip()
+		new_url = self.url_edit.text().strip()
+		if self.parent:
+			self.parent.playlist[self.idx]["title"] = new_title
+			self.parent.playlist[self.idx]["url"] = new_url
+			# 更新顯示
+			self.parent.list_widget.item(self.idx).setText(new_title)
+		self.accept()
+
+	def preview(self):
+		url = self.url_edit.text().strip()
+		if not url:
+			return
+		if os.path.exists(url):
+			os.startfile(url)
+		else:
+			webbrowser.open(url)
+
 class PlaylistLoader(QThread):
 	finished = pyqtSignal(list, bool)  # 載入完成後傳回 playlist
 
@@ -438,44 +537,44 @@ class DownloadThread(QThread):
 			self.download_finished.emit(False, str(e))
 
 class PlaylistSearchDialog(QDialog):
-    def __init__(self, playlist, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("搜尋歌單")
-        self.resize(400, 300)
+	def __init__(self, playlist, parent=None):
+		super().__init__(parent)
+		self.setWindowTitle("搜尋歌單")
+		self.resize(400, 300)
 
-        self.playlist = playlist
+		self.playlist = playlist
 
-        layout = QVBoxLayout(self)
-        self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("輸入關鍵字…")
-        layout.addWidget(self.search_input)
+		layout = QVBoxLayout(self)
+		self.search_input = QLineEdit()
+		self.search_input.setPlaceholderText("輸入關鍵字…")
+		layout.addWidget(self.search_input)
 
-        self.list_widget = QListWidget()
-        layout.addWidget(self.list_widget)
+		self.list_widget = QListWidget()
+		layout.addWidget(self.list_widget)
 
-        btn_close = QPushButton("關閉")
-        btn_close.clicked.connect(self.close)
-        layout.addWidget(btn_close)
+		btn_close = QPushButton("關閉")
+		btn_close.clicked.connect(self.close)
+		layout.addWidget(btn_close)
 
-        self.search_input.textChanged.connect(self.update_results)
-        self.list_widget.itemDoubleClicked.connect(self.select_item)
+		self.search_input.textChanged.connect(self.update_results)
+		self.list_widget.itemDoubleClicked.connect(self.select_item)
 
-    def update_results(self, keyword):
-        self.list_widget.clear()
-        keyword = keyword.lower()
-        for idx, song in enumerate(self.playlist):
-            if keyword in song['title'].lower():
-                item = QListWidgetItem(f"{idx+1}. {song['title']}")
-                item.setData(1, idx)  # 存下 index
-                self.list_widget.addItem(item)
+	def update_results(self, keyword):
+		self.list_widget.clear()
+		keyword = keyword.lower()
+		for idx, song in enumerate(self.playlist):
+			if keyword in song['title'].lower():
+				item = QListWidgetItem(f"{idx+1}. {song['title']}")
+				item.setData(1, idx)  # 存下 index
+				self.list_widget.addItem(item)
 
-    def select_item(self, item):
-        idx = item.data(1)
-        self.accept()
-        self.selected_index = idx
+	def select_item(self, item):
+		idx = item.data(1)
+		self.accept()
+		self.selected_index = idx
 
-    def get_selected_index(self):
-        return getattr(self, 'selected_index', None)
+	def get_selected_index(self):
+		return getattr(self, 'selected_index', None)
 
 class LyricsWorker(QThread):
 	signal_done = pyqtSignal(str)  # 發送歌詞網址或 None
@@ -715,7 +814,7 @@ class YouTubePlayer(QWidget):
 
 		# 歌單顯示
 		self.list_widget = QListWidget()
-		self.list_widget.itemDoubleClicked.connect(self.select_song)
+		self.list_widget.itemDoubleClicked.connect(lambda _: self.select_song())
 		layout.addWidget(self.list_widget, 7, 0, 1, 3)  # 橫跨兩欄
 
 		self.setLayout(layout)
@@ -809,6 +908,10 @@ class YouTubePlayer(QWidget):
 		"""更多選項（如刪除、上移、下移）"""
 		menu = QMenu(self)
 
+		edit_action = QAction("📝 編輯")
+		edit_action.triggered.connect(lambda: self.edit_select_song(idx))
+		menu.addAction(edit_action)
+
 		download_action = QAction("⬇️ 下載")
 		download_action.triggered.connect(lambda: self.download_select_song(idx))
 		menu.addAction(download_action)
@@ -842,6 +945,10 @@ class YouTubePlayer(QWidget):
 			self.list_widget.setItemWidget(item, widget)
 
 		self.update_playlist_status()
+
+	def edit_select_song(self, idx):
+		dialog = EditSongsDialog(idx, self)
+		dialog.exec_()
 
 	def download_select_song(self, idx):
 		url = self.playlist[idx]['url']
@@ -1048,7 +1155,7 @@ class YouTubePlayer(QWidget):
 
 
 	def select_song(self, idx=None):
-		row = self.list_widget.currentRow() if idx is None else idx
+		row = self.list_widget.currentRow() if not idx else idx
 		
 		if row != -1:
 			self.current_index = row
