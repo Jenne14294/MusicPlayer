@@ -1028,7 +1028,7 @@ class YouTubePlayer(QWidget):
 			self.temp_filepath = media_path
 
 	def handle_play_failed(self, msg):
-		print(msg)
+		QMessageBox.critical(self, "錯誤", f"無法播放\n{msg}")
 		# 你也可以彈出 QMessageBox 或更新 UI 顯示錯誤
 
 
