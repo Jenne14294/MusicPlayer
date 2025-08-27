@@ -823,6 +823,8 @@ class YouTubePlayer(QWidget):
 	def load_playlist(self):
 		url = self.url_input.text()
 
+		print(url)
+
 		if not url:
 			return
 			
@@ -869,6 +871,9 @@ class YouTubePlayer(QWidget):
 				for item in selected:
 					self.playlist.append(item)
 
+		else:
+			self.playlist.extend(playlist)
+			
 		self.refresh_playlist_ui()
 
 	def clear_playlist(self):
