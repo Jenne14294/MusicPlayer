@@ -12,9 +12,19 @@ from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt5.QtGui import QIcon, QFontMetrics, QCursor
 from yt_dlp import YoutubeDL
 
+vlc_args = [
+    "--audio-replay-gain-mode=track",
+    "--audio-filter=compressor",
+    "--compressor-rms-peak=0",
+    "--compressor-ratio=4.0",
+    "--compressor-threshold=-10",
+    "--compressor-knee=1.0",
+    "--compressor-makeup-gain=5.0",
+]
+
 
 class AI_title():
-	api_key = "AIzaSyDPmuDwgNK9sp3DiYyW9f6cvSoZwu5SfDE"
+	api_key = "AIzaSyD1-M3YfupWpHFTG6GfYlwD0A9CWEURXPc"
 	gemini.configure(api_key = api_key)
 	model = gemini.GenerativeModel('gemini-2.0-flash')
 
@@ -688,7 +698,7 @@ class YouTubePlayer(QWidget):
 		self.current_index = 0
 		self.playlist_length = 0
 		self.loop = False
-		self.instance = vlc.Instance('--network-caching=1000', '--file-caching=1000', '--live-caching=1000')
+		self.instance = vlc.Instance(vlc_args)
 		self.player = self.instance.media_player_new()
 		self.temp_filepath = None
 		self.seeking = False
