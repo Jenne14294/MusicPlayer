@@ -20,6 +20,8 @@ vlc_args = [
     "--compressor-threshold=-10",
     "--compressor-knee=1.0",
     "--compressor-makeup-gain=5.0",
+	"--aout=directsound",     # 或 "--aout=wasapi"
+    "--volume-step=1",         # 音量控制最小單位
 ]
 
 
@@ -477,27 +479,14 @@ class MusicPlayerThread(QThread):
 		super().__init__(parent)
 		self.entry = entry
 		self.temp_filepath = None
-
+		
 	def run(self):
 		ydl_opts = {
-			"format": "bestaudio/best",
-			"extractaudio": True,
-			"audioformat": "mp3",
-			"outtmpl": "%(extractor)s-%(id)s-%(title)s.%(ext)s",
-			"restrictfilenames": True,
-			"noplaylist": True,
-			"nocheckcertificate": True,
-			"ignoreerrors": False,
-			"logtostderr": False,
-			"quiet": True,
-			"no_warnings": True,
-			"default_search": "auto",
-			"source_address": "0.0.0.0",
-			"force-ipv4": True,
-			"cachedir": False,
-			"user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+			'format': 'bestaudio[ext=m4a]/bestaudio/best',  # 優先 m4a
+			'noplaylist': True,
+			'quiet': True
 		}
-		
+
 		if not self.entry['url'].startswith("https://"):
 			self.play_success.emit(self.entry['url'], False)
 
@@ -506,19 +495,20 @@ class MusicPlayerThread(QThread):
 				with YoutubeDL(ydl_opts) as ydl:
 					info = ydl.extract_info(self.entry['url'], download=False)
 					stream_url = info['url']
-					time.sleep(3)
 					self.play_success.emit(stream_url, False)
 					return
 			except Exception as e:
+				self.play_failed.emit(f"播放失敗：{e}")
 				print("串流失敗，改為下載音訊播放")
 
-			try:
-				with YoutubeDL(ydl_opts) as ydl:
-					info = ydl.extract_info(self.entry['url'], download=True)
-					self.temp_filepath = ydl.prepare_filename(info)
-					self.play_success.emit(os.path.abspath(self.temp_filepath), True)
-			except Exception as e:
-				self.play_failed.emit(f"播放失敗：{e}")
+			# try:
+			# 	with YoutubeDL(ydl_opts) as ydl:
+			# 		info = ydl.extract_info(self.entry['url'], download=True)
+			# 		time.sleep(1)
+			# 		self.temp_filepath = os.path.join(temp_dir, ydl.prepare_filename(info))
+			# 		self.play_success.emit(os.path.abspath(self.temp_filepath), True)
+			# except Exception as e:
+			# 	self.play_failed.emit(f"播放失敗：{e}")
 
 class DownloadThread(QThread):
 	download_finished = pyqtSignal(bool, str)
@@ -901,12 +891,14 @@ class YouTubePlayer(QWidget):
 		self.current_length.setText(f"歌曲數量：{self.current_index + 1 % self.playlist_length if self.playlist_length > 0 else 0} / {self.playlist_length}")
 
 	def move_song_up(self, idx):
-		previous_song_index = (idx - 1) % len(self.playlist)
-		self.swap_songs(idx, previous_song_index)	
+		if idx > 0:
+			self.playlist[idx-1], self.playlist[idx] = self.playlist[idx], self.playlist[idx-1]
+			self.refresh_playlist_ui(select_idx=idx-1)  # 移動後保持顯示
 
 	def move_song_down(self, idx):
-		next_song_index = (idx + 1) % len(self.playlist)
-		self.swap_songs(idx, next_song_index)
+		if idx < len(self.playlist) - 1:
+			self.playlist[idx+1], self.playlist[idx] = self.playlist[idx], self.playlist[idx+1]
+			self.refresh_playlist_ui(select_idx=idx+1)
 
 	def swap_songs(self, operator_idx, operation_idx):
 		temp_song = self.playlist[operation_idx]
@@ -941,7 +933,7 @@ class YouTubePlayer(QWidget):
 
 		menu.exec_(QCursor.pos())
 
-	def refresh_playlist_ui(self):
+	def refresh_playlist_ui(self, select_idx=None):
 		"""清空並重新生成歌單 UI"""
 		self.list_widget.clear()
 
@@ -960,6 +952,12 @@ class YouTubePlayer(QWidget):
 			self.list_widget.setItemWidget(item, widget)
 
 		self.update_playlist_status()
+
+		# ✅ 保持顯示指定歌曲
+		if select_idx is not None and 0 <= select_idx < self.list_widget.count():
+			self.list_widget.setCurrentRow(select_idx)
+			item = self.list_widget.item(select_idx)
+			self.list_widget.scrollToItem(item)   # <-- 自動捲到指定歌曲
 
 	def edit_select_song(self, idx):
 		dialog = EditSongsDialog(idx, self)
