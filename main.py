@@ -3,9 +3,9 @@ import random
 import time
 import os
 import vlc
-import google.generativeai as gemini #gemini api
 import requests
 import webbrowser
+import re
 
 from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QLineEdit, QListWidget, QLabel, QSlider, QStyle, QGridLayout, QSystemTrayIcon, QMenu, QAction, QWidgetAction, QHBoxLayout, QMessageBox, QDialog, QVBoxLayout, QListWidgetItem, QFileDialog, QSizePolicy
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
@@ -24,25 +24,58 @@ vlc_args = [
     "--volume-step=1",         # 音量控制最小單位
 ]
 
+def extract_clean_title(filename):
+    """
+    從檔案名稱中提取乾淨的歌名。
+    不使用 AI，純用字串處理與正則表達式 (Regex)。
+    """
+    
+    # 1. 去掉副檔名 (例如 .mp3, .flac)
+    # splitext 會把 "music.mp3" 拆成 ("music", ".mp3")
+    base_name = os.path.splitext(filename)[0]
+    
+    # 2. 定義要過濾的「雜訊」關鍵字
+    # 這些字通常出現在 Youtube 下載的檔名中
+    # 寫法解釋：
+    # \[.*?\]  -> 去掉中括號及內容，如 [MV], [Official]
+    # 【.*?】  -> 去掉粗括號及內容，如 【高音質】
+    # \s* -> 去掉前面的空白
+    # (?i)     -> 不分大小寫
+    
+    # 第一步：直接暴力移除的中括號與粗括號 (通常裡面都是廢話)
+    base_name = re.sub(r'\[.*?\]', '', base_name)
+    base_name = re.sub(r'【.*?】', '', base_name)
+    
+    # 第二步：精細移除圓括號 ()
+    # 我們不想移除 (feat. Jay Chou) 或 (Remix)，只想移除 (Official Video) 這種
+    junk_keywords = [
+        "official", "video", "audio", "mv", "music video", 
+        "lyrics", "lyric", "hd", "hq", "4k", "1080p", "720p",
+        "live", "concert", "full album", "eng sub"
+    ]
+    # 組合正則表達式：搜尋包含上述關鍵字的括號
+    pattern = r'\s*\((?:' + '|'.join(junk_keywords) + r').*?\)'
+    base_name = re.sub(pattern, '', base_name, flags=re.IGNORECASE)
+    
+    # 3. 去掉前面的軌道編號 (例如 "01. 稻香", "1 - 稻香")
+    # ^\d+  -> 開頭是數字
+    # [\.\-\s]+ -> 後面接點、橫線或空白
+    base_name = re.sub(r'^\d+[\.\-\s]+', '', base_name)
+    
+    # 4. 處理 "歌手 - 歌名" 格式
+    # 很多檔案是 "周杰倫 - 稻香"，我們只要 "稻香"
+    # 策略：如果檔名中有 " - "，我們通常取「最後一部分」作為歌名
+    if " - " in base_name:
+        parts = base_name.split(" - ")
+        # 取最後一段 (這樣即使是 "Album - Artist - Song" 也能抓對)
+        base_name = parts[-1]
 
-class AI_title():
-	api_key = "AIzaSyD1-M3YfupWpHFTG6GfYlwD0A9CWEURXPc"
-	gemini.configure(api_key = api_key)
-	model = gemini.GenerativeModel('gemini-2.0-flash')
+    # 5. 去掉 Youtube ID (有些工具下載會附帶 id，如 "-dQw4w9WgXcQ")
+    # 這是選用的，如果你發現檔名屁股都有奇怪的亂碼可以打開這行
+    # base_name = re.sub(r'-[\w\-_]{11}$', '', base_name)
 
-	chat = model.start_chat(history=[])
-
-	def ask_ai(self, content):
-		response = self.chat.send_message(
-			content, 
-			generation_config = gemini.types.GenerationConfig(
-				candidate_count = 1,
-				max_output_tokens = 2000,
-				temperature=0.2
-				)
-			)
-		
-		return response.text
+    # 6. 最後去掉前後多餘的空白
+    return base_name.strip()
 
 class ClickableSlider(QSlider):
 	def mousePressEvent(self, event):
@@ -1108,8 +1141,7 @@ class YouTubePlayer(QWidget):
 		selected_index = self.current_index if not selected_index else selected_index
 
 		current_song = self.playlist[selected_index]["title"]
-		ai_title = AI_title()
-		true_title = ai_title.ask_ai(f"請給我這首歌的歌名 只要歌名就好\n{current_song}")
+		true_title = extract_clean_title(f"請給我這首歌的歌名 只要歌名就好\n{current_song}")
 
 		self.lyrics_thread = LyricsWorker(true_title)
 		self.lyrics_thread.signal_done.connect(self.open_lyrics)
