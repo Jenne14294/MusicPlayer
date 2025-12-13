@@ -22,6 +22,7 @@ vlc_args = [
 	"--compressor-makeup-gain=5.0",
 	"--aout=directsound",     # 或 "--aout=wasapi"
 	"--volume-step=1",         # 音量控制最小單位
+	"--network-caching=3000 --http-reconnect"
 ]
 
 def extract_clean_title(filename):
@@ -650,6 +651,38 @@ class ExportPlaylistDialog(QDialog):
 		except Exception as e:
 			QMessageBox.critical(self, "匯出失敗", f"無法儲存播放清單：\n{e}")
 
+class VlcStatusWorker(QThread):
+	# 定義信號：分別傳送 (當前時間, 總長度, 狀態)
+	# 使用 int, int, object (因為 state 是 vlc 的物件)
+	status_updated = pyqtSignal(int, int, object)
+
+	def __init__(self, player):
+		super().__init__()
+		self.player = player
+		self.is_running = True
+
+	def run(self):
+		while self.is_running:
+			if self.player:
+				try:
+					# 這些是有可能卡住的網路操作，現在在背景跑
+					current = self.player.get_time()
+					length = self.player.get_length()
+					state = self.player.get_state()
+					
+					# 發射信號回主線程 (這不會卡住)
+					self.status_updated.emit(current, length, state)
+				except Exception as e:
+					print(f"VLC Worker Error: {e}")
+			
+			# 不需要太快，0.2 ~ 0.5 秒一次即可
+			time.sleep(0.2)
+
+	def stop(self):
+		self.is_running = False
+		self.wait()
+
+
 class YouTubePlayer(QWidget):
 	def apply_custom_theme(self):
 		self.setStyleSheet("""
@@ -717,10 +750,14 @@ class YouTubePlayer(QWidget):
 		self.is_handling_end = False
 
 		self.init_ui()
-		self.timer = QTimer()
-		self.timer.timeout.connect(self.update_status)
-		self.timer.start(1000)
 		self.apply_custom_theme()
+
+		# 不再使用 QTimer 來呼叫 update_status
+		self.status_worker = VlcStatusWorker(self.player)
+		# 將信號連接到你的更新函式
+		self.status_worker.status_updated.connect(self.update_status)
+		# 開始執行緒
+		self.status_worker.start()
 
 
 	def init_ui(self):
@@ -1204,35 +1241,38 @@ class YouTubePlayer(QWidget):
 			self.player.set_time(new_time)
 			QTimer.singleShot(500, lambda: setattr(self, 'seeking', False))
 
-	def update_status(self):
+	def update_status(self, current, length, state):
 		if not self.playlist:
 			return 
+		
+		# 這裡不需要再寫 self.player.get_state() 了，直接用傳進來的 state
 		
 		entry = self.playlist[self.current_index]
 		title = entry['title']
 
-		state = self.player.get_state()
-		
 		# 限制觸發 Ended 的冷卻期 + 單次處理
 		if state == vlc.State.Ended and not self.is_handling_end:
 			self.is_handling_end = True
-			self.end_handled_time = time.time()  # 加上處理時間紀錄
+			self.end_handled_time = time.time()
 			self.cleanup_temp_file()
 			if self.loop:
 				self.play_music()
 			else:
 				self.play_next()
-			QTimer.singleShot(1500, self.reset_end_flag)  # 延長到 1.5 秒
+			QTimer.singleShot(1500, self.reset_end_flag)
 
 		if not self.seeking:
-			length = self.player.get_length()
-			current = self.player.get_time()
+			# 這裡也不用 self.player.get_time() 了，直接用傳進來的 current, length
 			if length > 0:
 				ratio = current / length
 				self.position_slider.setValue(int(ratio * 1000))
 
 			total_time = f"{length // 60000:02}:{(length // 1000) % 60:02}" if length > 0 else "00:00"
-			current_time = f"{current // 60000:02}:{(current // 1000) % 60:02}" if current >= 0 else "00:00"
+			
+			# 防止剛開始 current 為 -1
+			safe_current = current if current >= 0 else 0
+			current_time = f"{safe_current // 60000:02}:{(safe_current // 1000) % 60:02}"
+			
 			self.time_label.setText(f"播放時間：{current_time} / {total_time}")
 			self.tray_icon.update_status(title, current_time, total_time)
 
@@ -1276,6 +1316,7 @@ class YouTubePlayer(QWidget):
 	def quit_app(self):
 			"""結束程式，清理資源"""
 			self.tray_icon.hide()
+			self.status_worker.stop()
 			QApplication.quit()
 
 
