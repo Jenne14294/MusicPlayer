@@ -11,6 +11,10 @@ from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QLineEdit, QList
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt5.QtGui import QIcon, QFontMetrics, QCursor
 from yt_dlp import YoutubeDL
+from dotenv import load_dotenv
+
+load_dotenv()
+api_key = os.getenv("Genius_API_Key")
 
 vlc_args = [
 	"--audio-replay-gain-mode=track",
@@ -608,8 +612,7 @@ class LyricsWorker(QThread):
 
 	def run(self):
 		try:
-			client_access_token = "aW0PCZtUaF6ol8tBEFw6iAQ0dYakXRLpb_1nYzoOJBnAIbzctmdBK7c3IvcvE5Hs"
-			url = f"http://api.genius.com/search?q={self.title}&access_token={client_access_token}"
+			url = f"http://api.genius.com/search?q={self.title}&access_token={api_key}"
 			response = requests.get(url)
 			json_data = response.json()
 			song = json_data['response']['hits'][0]['result']['relationships_index_url']
