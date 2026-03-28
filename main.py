@@ -3,18 +3,14 @@ import random
 import time
 import os
 import vlc
-import requests
+import json
 import webbrowser
-import re
+import google.generativeai as genai
 
-from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QLineEdit, QListWidget, QLabel, QSlider, QStyle, QGridLayout, QSystemTrayIcon, QMenu, QAction, QWidgetAction, QHBoxLayout, QMessageBox, QDialog, QVBoxLayout, QListWidgetItem, QFileDialog, QSizePolicy
+from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QLineEdit, QListWidget, QLabel, QSlider, QStyle, QGridLayout, QSystemTrayIcon, QMenu, QAction, QWidgetAction, QHBoxLayout, QMessageBox, QDialog, QVBoxLayout, QListWidgetItem, QFileDialog, QSizePolicy, QTextBrowser, QComboBox, QTextEdit
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt5.QtGui import QIcon, QFontMetrics, QCursor
 from yt_dlp import YoutubeDL
-from dotenv import load_dotenv
-
-load_dotenv()
-api_key = os.getenv("Genius_API_Key")
 
 vlc_args = [
 	# --- 音訊輸出與音量控制 ---
@@ -41,6 +37,187 @@ vlc_args = [
 	# "--compressor-makeup-gain=15.0" # 暴力拉高 15dB，這樣小聲的音樂就會明顯變大聲
 ]
 
+
+CONFIG_FILE = "config.json"
+
+class GeminiSettingsDialog(QDialog):
+	def __init__(self, parent=None):
+		super().__init__(parent)
+		self.setWindowTitle("Gemini 歌詞設定與教學")
+		self.resize(500, 400)
+		self.setup_ui()
+		self.load_current_config()
+
+	def setup_ui(self):
+		layout = QVBoxLayout(self)
+
+		# --- 步驟一：教學區塊 ---
+		tutorial_text = """
+		<h3>步驟一：取得免費的 API Key</h3>
+		<ol>
+			<li>點擊前往 <a href="https://aistudio.google.com/app/apikey">Google AI Studio</a></li>
+			<li>登入您的 Google 帳號</li>
+			<li>點擊左上角的 <b>「Create API key」</b></li>
+			<li>將產生的一長串英文數字複製下來</li>
+		</ol>
+		"""
+		self.browser = QTextBrowser()
+		self.browser.setOpenExternalLinks(True) # 允許直接點擊打開網頁
+		self.browser.setHtml(tutorial_text)
+		self.browser.setMaximumHeight(150)
+		layout.addWidget(self.browser)
+
+		# --- 步驟二：輸入 API Key ---
+		layout.addWidget(QLabel("<b>步驟二：貼上您的 API Key</b>"))
+		self.key_input = QLineEdit()
+		self.key_input.setPlaceholderText("請在此貼上 API Key (例如：AIzaSy...)")
+		self.key_input.setEchoMode(QLineEdit.PasswordEchoOnEdit) # 點擊時顯示，平時遮蔽
+		layout.addWidget(self.key_input)
+
+		# 驗證按鈕
+		self.btn_verify = QPushButton("驗證 API Key 並載入模型")
+		self.btn_verify.clicked.connect(self.verify_and_load_models)
+		layout.addWidget(self.btn_verify)
+
+		# --- 步驟三：模型選擇區塊 ---
+		layout.addWidget(QLabel("<b>步驟三：選擇您想要的 AI 模型</b>"))
+		self.model_combo = QComboBox()
+		self.model_combo.setEnabled(False) # 驗證成功前不給選
+		layout.addWidget(self.model_combo)
+
+		# 儲存按鈕
+		self.btn_save = QPushButton("儲存設定")
+		self.btn_save.setEnabled(False)
+		self.btn_save.clicked.connect(self.save_and_close)
+		layout.addWidget(self.btn_save)
+
+	def load_current_config(self):
+		"""讀取現有設定並填入"""
+		if os.path.exists(CONFIG_FILE):
+			try:
+				with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+					config = json.load(f)
+					saved_key = config.get("gemini_api_key", "")
+					if saved_key:
+						self.key_input.setText(saved_key)
+			except:
+				pass
+
+	def get_friendly_desc(self, model_name):
+		"""把工程師名詞翻譯成人類看得懂的白話文"""
+		name_lower = model_name.lower()
+		if "flash" in name_lower:
+			return f"{model_name} (⭐⭐⭐ 推薦！速度極快，最適合抓歌詞)"
+		elif "pro" in name_lower:
+			return f"{model_name} (較聰明但反應稍慢，可能消耗較多免費額度)"
+		else:
+			return f"{model_name} (標準模型)"
+
+	def verify_and_load_models(self):
+		api_key = self.key_input.text().strip()
+		if not api_key:
+			QMessageBox.warning(self, "錯誤", "請先輸入 API Key！")
+			return
+
+		self.btn_verify.setText("驗證中，請稍候...")
+		self.btn_verify.setEnabled(False)
+		
+		try:
+			genai.configure(api_key=api_key)
+			self.model_combo.clear()
+			
+			# 抓取可用模型
+			for m in genai.list_models():
+				if 'generateContent' in m.supported_generation_methods:
+					# 去掉前綴 'models/' 讓畫面乾淨點
+					display_name = m.name.replace("models/", "")
+					friendly_text = self.get_friendly_desc(display_name)
+					# 儲存 (顯示文字, 實際模型名稱)
+					self.model_combo.addItem(friendly_text, display_name)
+			
+			self.model_combo.setEnabled(True)
+			self.btn_save.setEnabled(True)
+			QMessageBox.information(self, "成功", "驗證成功！請在下拉選單挑選模型，然後點擊儲存。")
+			
+		except Exception as e:
+			QMessageBox.critical(self, "驗證失敗", f"API Key 無效或網路錯誤：\n{e}")
+		finally:
+			self.btn_verify.setText("驗證 API Key 並載入模型")
+			self.btn_verify.setEnabled(True)
+
+	def save_and_close(self):
+		api_key = self.key_input.text().strip()
+		# 取得 ComboBox 夾帶的隱藏資料 (實際模型名稱)
+		selected_model = self.model_combo.currentData() 
+		
+		config = {"gemini_api_key": api_key, "gemini_model": selected_model}
+		with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+			json.dump(config, f, indent=4)
+			
+		QMessageBox.information(self, "儲存成功", f"設定已儲存！\n目前使用模型：{selected_model}")
+		self.accept()
+
+class GeminiLyricsWorker(QThread):
+	signal_done = pyqtSignal(str)
+	# 新增一個錯誤訊號：用來通知主視窗「需要重設 API」
+	signal_need_reset = pyqtSignal(str) 
+
+	def __init__(self, title, api_key, model_name):
+		super().__init__()
+		self.title = title
+		self.api_key = api_key
+		self.model_name = model_name
+
+	def run(self):
+		try:
+			genai.configure(api_key=self.api_key)
+			model = genai.GenerativeModel(self.model_name)
+			
+			prompt = (
+                f"請務必提供【{self.title}】這首歌曲的「完整」歌詞。 "
+                f"請包含主歌(Verse)、橋段(Bridge)、副歌(Chorus)等所有段落，從第一句到最後一句完整列出。"
+                f"請直接輸出純歌詞文字即可，絕對不要只給副歌或摘要，也不需要任何解釋或問候語。"
+            )
+			response = model.generate_content(prompt)
+			
+			if response.text:
+				self.signal_done.emit(response.text.strip())
+			else:
+				self.signal_done.emit("")
+				
+		except Exception as e:
+			error_msg = str(e).lower()
+			# 判斷是不是額度用盡 (Quota exceeded / 429 Too Many Requests)
+			if "quota" in error_msg or "429" in error_msg:
+				print("Gemini API 額度已用盡！")
+				self.signal_need_reset.emit("quota")
+			# 判斷是不是模型被下架或找不到 (Not found / 404)
+			elif "not found" in error_msg or "404" in error_msg:
+				print("此模型已失效或不存在！")
+				self.signal_need_reset.emit("invalid_model")
+			else:
+				print(f"Gemini 其他錯誤：{e}")
+				self.signal_done.emit("") # 一般錯誤就當作找不到歌詞處理
+
+class LyricsDialog(QDialog):
+	def __init__(self, title, lyrics, parent=None):
+		super().__init__(parent)
+		self.setWindowTitle(f"歌詞 - {title}")
+		self.resize(400, 600)  # 設定視窗大小
+
+		layout = QVBoxLayout(self)
+		
+		# 使用唯讀的文字框來顯示歌詞
+		self.text_edit = QTextEdit(self)
+		self.text_edit.setReadOnly(True)
+		self.text_edit.setPlainText(lyrics)
+		
+		# 讓字體稍微大一點，方便閱讀
+		font = self.text_edit.font()
+		font.setPointSize(12)
+		self.text_edit.setFont(font)
+		
+		layout.addWidget(self.text_edit)
 
 class ClickableSlider(QSlider):
 	def mousePressEvent(self, event):
@@ -574,24 +751,6 @@ class PlaylistSearchDialog(QDialog):
 	def get_selected_index(self):
 		return getattr(self, 'selected_index', None)
 
-class LyricsWorker(QThread):
-	signal_done = pyqtSignal(str)  # 發送歌詞網址或 None
-
-	def __init__(self, title):
-		super().__init__()
-		self.title = title
-
-	def run(self):
-		try:
-			url = f"http://api.genius.com/search?q={self.title}&access_token={api_key}"
-			response = requests.get(url)
-			json_data = response.json()
-			song = json_data['response']['hits'][0]['result']['relationships_index_url']
-			self.signal_done.emit(song)
-		except Exception as e:
-			print("歌詞搜尋錯誤：", e)
-			self.signal_done.emit(None)
-
 class ExportPlaylistDialog(QDialog):
 	def __init__(self, playlist, parent=None):
 		super().__init__(parent)
@@ -655,7 +814,6 @@ class VlcStatusWorker(QThread):
 	def stop(self):
 		self.is_running = False
 		self.wait()
-
 
 class YouTubePlayer(QWidget):
 	def apply_custom_theme(self):
@@ -1131,34 +1289,119 @@ class YouTubePlayer(QWidget):
 		random.shuffle(self.playlist)
 		self.refresh_playlist_ui()
 
+	
+
+	def open_gemini_settings(self):
+		"""隨時呼叫這個函式，就可以打開設定視窗讓用戶換模型"""
+		dialog = GeminiSettingsDialog(self)
+		dialog.exec_()
+
+	def get_gemini_config(self):
+		"""讀取目前的設定"""
+		if os.path.exists(CONFIG_FILE):
+			try:
+				with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+					return json.load(f)
+			except:
+				pass
+		return {}
+
+	def load_api_key(self):
+		"""讀取設定檔中的 API Key"""
+		if os.path.exists(CONFIG_FILE):
+			try:
+				with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+					config = json.load(f)
+					return config.get("gemini_api_key", "")
+			except Exception as e:
+				print("讀取設定檔失敗:", e)
+		return ""
+
+	def save_api_key(self, api_key):
+		"""將 API Key 存入設定檔"""
+		config = {}
+		if os.path.exists(CONFIG_FILE):
+			try:
+				with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+					config = json.load(f)
+			except:
+				pass
+		
+		config["gemini_api_key"] = api_key
+		
+		with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+			json.dump(config, f, indent=4)
+
 	def search_lyrics(self, selected_index=None):
+		# 1. 檢查並取得 API Key 與 模型名稱 (改成使用 get_gemini_config 一次讀取)
+		config = self.get_gemini_config()
+		api_key = config.get("gemini_api_key", "")
+		model_name = config.get("gemini_model", "")
+
+		# 如果找不到 API Key 或 模型名稱，強制呼叫我們做好的設定視窗
+		if not api_key or not model_name:
+			self.tray_icon.showMessage("提示", "請先設定 Gemini API 與模型", 1, 3000)
+			self.open_gemini_settings()
+			return # 使用者設定完後，必須重新按一次搜尋
+
+		if not self.playlist:
+			return
+
+		# 2. 準備搜尋
 		self.tray_icon.showMessage(
 			"YouTube 音樂播放器",
-			"正在搜尋歌詞，找到會自動開啟網頁(可能會找到錯誤的歌曲)",
-			QSystemTrayIcon.Information,
+			"正在呼叫 Gemini 撰寫歌詞中，請稍候...",
+			1, # QSystemTrayIcon.Information 的整數值
 			3000
 		)
 
 		selected_index = self.current_index if not selected_index else selected_index
-
+		
+		# 這裡假設你的 extract_clean_title 已經定義好了 (如果你沒這個函數，就直接用 current_song)
 		current_song = self.playlist[selected_index]["title"]
-		true_title = extract_clean_title(current_song)
+		self.current_lyrics_title = current_song
 
-		self.lyrics_thread = LyricsWorker(true_title)
-		self.lyrics_thread.signal_done.connect(self.open_lyrics)
+		# 3. 啟動背景執行緒 (現在 api_key 和 model_name 都有定義了)
+		self.lyrics_thread = GeminiLyricsWorker(self.current_lyrics_title, api_key, model_name)
+		self.lyrics_thread.signal_done.connect(self.show_lyrics)
+		self.lyrics_thread.signal_need_reset.connect(self.handle_gemini_error) # 記得補上錯誤攔截的連線
 		self.lyrics_thread.start()
 
-
-	def open_lyrics(self, url):
-		if url:
-			webbrowser.get('windows-default').open_new(url)
+	def show_lyrics(self, lyrics_text):
+		if lyrics_text:
+			# 搜尋成功，打開我們自訂的歌詞視窗
+			self.lyrics_window = LyricsDialog(self.current_lyrics_title, lyrics_text, self)
+			self.lyrics_window.show()
 		else:
+			# 搜尋失敗 (可能是 Key 錯誤、額度用盡或網路問題)
 			self.tray_icon.showMessage(
 				"歌詞搜尋失敗",
-				"找不到歌詞或搜尋錯誤",
-				QSystemTrayIcon.Warning,
+				"找不到歌詞，或 API Key 無效/網路異常",
+				2, # QSystemTrayIcon.Warning
 				3000
 			)
+			
+			# 如果懷疑是 Key 的問題，可以給個重設的選項 (非必要，可選加)
+			reply = QMessageBox.question(
+				self, '搜尋失敗', '無法取得歌詞。是否要重新設定 API Key？',
+				QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+			)
+			if reply == QMessageBox.Yes:
+				self.save_api_key("") # 清空 Key
+				self.search_lyrics()  # 重新觸發搜尋流程
+
+	def handle_gemini_error(self, error_type):
+		"""當模型失效或額度爆掉時觸發"""
+		if error_type == "quota":
+			msg = "您的 API 免費額度似乎已經用盡了！\n請更換一個 Google 帳號申請新的 API Key。"
+		elif error_type == "invalid_model":
+			msg = "您目前選擇的 AI 模型已失效或被移除！\n請重新驗證並選擇其他模型。"
+		else:
+			msg = "發生未知錯誤，請檢查網路或 API 狀態。"
+			
+		QMessageBox.critical(self, "Gemini API 異常", msg)
+		# 強制開啟設定視窗讓用戶重選
+		self.open_gemini_settings()
 
 	def search_in_playlist(self):
 		dialog = PlaylistSearchDialog(self.playlist, self)
@@ -1185,9 +1428,6 @@ class YouTubePlayer(QWidget):
 		)
 		if file_path:
 			self.load_playlist_from_file(file_path)
-
-
-
 
 	def change_volume(self, value):
 		self.player.audio_set_volume(value)
