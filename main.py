@@ -17,59 +17,30 @@ load_dotenv()
 api_key = os.getenv("Genius_API_Key")
 
 vlc_args = [
-	"--audio-replay-gain-mode=track",
-	"--audio-filter=compressor",
-	"--compressor-rms-peak=0",
-	"--compressor-ratio=4.0",
-	"--compressor-threshold=-10",
-	"--compressor-knee=1.0",
-	"--compressor-makeup-gain=5.0",
-	"--aout=directsound",     # 或 "--aout=wasapi"
-	"--volume-step=1",         # 音量控制最小單位
-	"--network-caching=3000 --http-reconnect"
+	# --- 音訊輸出與音量控制 ---
+	"--aout=directsound",     
+	"--volume-step=1",        
+	
+	# --- 網路防卡死設定 (記得一定要拆開！) ---
+	"--network-caching=5000", # 建議稍微加大到 5000 毫秒比較穩
+	"--http-reconnect",
+	
+	# --- 音量自動平衡 (二選一，建議先試試方法 A) ---
+	
+	# 方法 A：使用 VLC 內建的簡單「音量標準化 (Volume Normalizer)」
+	# 這個比 compressor 簡單粗暴，會自動把太小聲的拉大，太大聲的壓下去
+	"--audio-filter=normvol",
+	"--norm-max-level=2.0",   # 增強級別，數字越大提昇越多 (預設是 2.0，可以調成 3.0 或 4.0 試試)
+	
+	# 方法 B：如果你還是想用 Compressor，請把參數改激進一點
+	# "--audio-filter=compressor",
+	# "--compressor-rms-peak=0",
+	# "--compressor-ratio=5.0",      # 壓縮比率調高一點
+	# "--compressor-threshold=-25",  # 門檻降到 -25dB，讓小聲的音樂也能觸發壓縮器
+	# "--compressor-knee=1.0",
+	# "--compressor-makeup-gain=15.0" # 暴力拉高 15dB，這樣小聲的音樂就會明顯變大聲
 ]
 
-def extract_clean_title(filename):
-	base_name = os.path.splitext(filename)[0]
-	
-	# 優先策略：直接抓取『』內的內容 (常見於日系官方歌名)
-	match = re.search(r'『(.*?)』', base_name)
-	if match:
-		return match.group(1).strip()
-
-	# 1. 移除 [] 與 【】
-	base_name = re.sub(r'\[.*?\]', '', base_name)
-	base_name = re.sub(r'【.*?】', '', base_name)
-
-	# 2. 移除含有特定雜訊關鍵字的括號 (支援全形與半形)
-	junk_keywords = [
-		"official", "video", "audio", "mv", "music video", "music clip", "clip",
-		"lyrics", "lyric", "hd", "hq", "4k", "1080p", "720p",
-		"live", "concert", "full album", "eng sub",
-		"アニメ", "オープニング", "テーマ", "エンディング", 
-		"主題歌", "劇中歌", "op", "ed", "non-credit", "creditless"
-	]
-	
-	pattern = r'\s*[\(（](?:' + '|'.join(junk_keywords) + r').*?[\)）]'
-	base_name = re.sub(pattern, '', base_name, flags=re.IGNORECASE)
-
-	# 3. 移除前後有dash的標籤 (如 -MUSiC CLiP-)
-	base_name = re.sub(r'\s*-[a-zA-Z\s]+-\s*', '', base_name)
-
-	# 4. 移除開頭編號 (如 "01. ")
-	base_name = re.sub(r'^\d+[\.\-\s]+', '', base_name)
-	
-	# 5. 處理 "歌手 - 歌名" 格式，取後段
-	if " - " in base_name:
-		base_name = base_name.split(" - ")[-1]
-	
-	# 6. 嘗試抓取「」內的內容
-	match_single_quote = re.search(r'「(.*?)」', base_name)
-	if match_single_quote:
-		base_name = match_single_quote.group(1)
-
-	print(base_name)
-	return base_name.strip()
 
 class ClickableSlider(QSlider):
 	def mousePressEvent(self, event):
@@ -1094,8 +1065,9 @@ class YouTubePlayer(QWidget):
 				QMessageBox.critical(self, "錯誤", f"無法播放 {media_path}，\n請確認網址或檔案路徑是否正確。")
 				return
 
-		media = self.instance.media_new(media_path)
-		self.player.set_media(media)
+		# 這裡加上 self. ，讓它變成實例變數，常駐在記憶體中！
+		self.current_media = self.instance.media_new(media_path)
+		self.player.set_media(self.current_media)
 		self.player.play()
 		
 		# 如果是下載的檔案，記得保存 temp 檔路徑以便清理
