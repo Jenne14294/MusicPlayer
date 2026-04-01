@@ -1,2 +1,7 @@
 .env
 config.json
+venv/
+plugins/
+deno.exe
+libvlc.dll
+libvlccore.dll
