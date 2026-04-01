@@ -5,3 +5,5 @@ plugins/
 deno.exe
 libvlc.dll
 libvlccore.dll
+Youtube Player.spec
+build/
