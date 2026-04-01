@@ -16,6 +16,7 @@ vlc_args = [
 	# --- 音訊輸出與音量控制 ---
 	"--aout=directsound",     
 	"--volume-step=1",        
+	"--no-video",
 	
 	# --- 網路防卡死設定 (記得一定要拆開！) ---
 	"--network-caching=5000", # 建議稍微加大到 5000 毫秒比較穩
@@ -621,9 +622,12 @@ class PlaylistLoader(QThread):
 	def run(self):
 		playlist = []
 		ydl_opts = {
+			'format': 'bestaudio[ext=m4a]/bestaudio/best',  # 優先 m4a
+			'noplaylist': True,
 			'quiet': True,
-			'extract_flat': 'in_playlist',
-			'force_generic_extractor': True,
+			
+			# 🌟 加入這行：微調 YouTube 擷取器的客戶端設定，能繞過部分嚴格驗證
+			'extractor_args': {'youtube': {'player_client': ['android', 'web']}}
 		}
 
 		with YoutubeDL(ydl_opts) as ydl:
@@ -659,7 +663,10 @@ class MusicPlayerThread(QThread):
 		ydl_opts = {
 			'format': 'bestaudio[ext=m4a]/bestaudio/best',  # 優先 m4a
 			'noplaylist': True,
-			'quiet': True
+			'quiet': True,
+			
+			# 🌟 加入這行：微調 YouTube 擷取器的客戶端設定，能繞過部分嚴格驗證
+			'extractor_args': {'youtube': {'player_client': ['android', 'web']}}
 		}
 
 		if not self.entry['url'].startswith("https://"):
