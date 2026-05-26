@@ -165,6 +165,15 @@ class GeminiLyricsWorker(QThread):
 		self.model_name = model_name
 
 	def run(self):
+		# ==========================================
+		# 階段 0：檢查原始標題快取 (最省 API)
+		# ==========================================
+		cached_lyrics = lyric_db.get_lyrics_by_raw_title(self.raw_title)
+		if cached_lyrics:
+			print(f"📦 命中原始標題快取: {self.raw_title}")
+			self.signal_done.emit(cached_lyrics)
+			return
+
 		track_name = self.raw_title
 		artist_name = ""
 
@@ -197,17 +206,27 @@ class GeminiLyricsWorker(QThread):
 			
 			print(f"🧠 AI 解析結果 -> 歌名: {track_name}, 歌手: {artist_name}")
 
+			# 🌟 階段 1.5：檢查標準化 song_key 快取 (不同影片但同首歌)
+			self.song_key = f"{artist_name} - {track_name}".strip().lower()
+			cached_lyrics = lyric_db.get_lyrics_by_song_key(self.song_key)
+			if cached_lyrics:
+				print(f"📦 命中歌曲名稱快取: {self.song_key}")
+				# 雖然是不同影片，但既然解析出同一首歌，就幫這個新影片也存一份快速索引
+				lyric_db.save_lyrics(self.raw_title, self.song_key, cached_lyrics)
+				self.signal_done.emit(cached_lyrics)
+				return
+
 		except Exception as e:
 			error_msg = str(e).lower()
 			if "quota" in error_msg or "429" in error_msg:
 				self.signal_need_reset.emit("quota")
-				return # 額度爆了就提早結束
+				return 
 			elif "not found" in error_msg or "404" in error_msg:
 				self.signal_need_reset.emit("invalid_model")
 				return
 			else:
 				print(f"Gemini 解析失敗，退回使用原始標題：{e}")
-				# 解析失敗沒關係，我們用原始標題硬上
+				self.song_key = self.raw_title.lower()
 
 
 		# ==========================================
@@ -220,7 +239,7 @@ class GeminiLyricsWorker(QThread):
 			
 			url = f"https://lrclib.net/api/search?q={urllib.parse.quote(search_query)}"
 			
-			# LRCLIB 官方要求必須附上 User-Agent，否則可能會被阻擋
+			# LRCLIB 官方要求必須附上 User-Agent
 			headers = {'User-Agent': 'YouTubeMusicPlayer/1.0 (https://github.com/Jenne14294)'}
 			
 			res = requests.get(url, headers=headers, timeout=10)
@@ -228,25 +247,21 @@ class GeminiLyricsWorker(QThread):
 			if res.status_code == 200:
 				data = res.json()
 				if data and len(data) > 0:
-					import re  # 記得在檔案最上方加上 import re (正規表示式)
+					import re
 					
 					best_lyrics = None
 					found_title = track_name
 					found_artist = artist_name
 
-					# 遍歷 LRCLIB 給的多個結果
 					for track in data:
 						lyrics = track.get('plainLyrics')
 						if lyrics:
-							# 如果是第一個有歌詞的，先當作備胎存起來
 							if not best_lyrics:
 								best_lyrics = lyrics
 								found_title = track.get('trackName', track_name)
 								found_artist = track.get('artistName', artist_name)
 							
-							# 🌟 探測器：檢查歌詞裡有沒有「中文字符」
 							if re.search(r'[\u4e00-\u9fff]', lyrics):
-								# 發現中文歌詞！立刻蓋掉備胎，然後停止搜尋
 								best_lyrics = lyrics
 								found_title = track.get('trackName', track_name)
 								found_artist = track.get('artistName', artist_name)
@@ -254,6 +269,8 @@ class GeminiLyricsWorker(QThread):
 
 					if best_lyrics:
 						final_text = f"【{found_title}】 - {found_artist}\n\n{best_lyrics}"
+						# 🌟 階段三：存入資料庫
+						lyric_db.save_lyrics(self.raw_title, self.song_key, final_text)
 						self.signal_done.emit(final_text)
 					else:
 						print("找到了歌曲，但沒有歌詞資料。")
