@@ -283,7 +283,7 @@ class LyricsDialog(QDialog):
 		
 		# 讓字體稍微大一點，方便閱讀
 		font = self.text_edit.font()
-		font.setPointSize(12)
+		font.setPointSize(18)
 		self.text_edit.setFont(font)
 		
 		layout.addWidget(self.text_edit)
