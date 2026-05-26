@@ -59,7 +59,8 @@ vlc_args = [
 ]
 
 
-CONFIG_FILE = "config.json"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_FILE = os.path.join(SCRIPT_DIR, "config.json")
 
 class GeminiSettingsDialog(QDialog):
 	def __init__(self, parent=None):
@@ -1426,7 +1427,8 @@ class YouTubePlayer(QWidget):
 			QMessageBox.warning(self, "失敗", "播放清單是空的，無法設為預設。")
 			return
 
-		default_m3u = "default_playlist.m3u"
+		# 修正：使用絕對路徑確保儲存成功
+		default_m3u = os.path.join(SCRIPT_DIR, "default_playlist.m3u")
 		try:
 			with open(default_m3u, "w", encoding="utf-8") as f:
 				f.write("#EXTM3U\n")
@@ -1435,9 +1437,9 @@ class YouTubePlayer(QWidget):
 					f.write(f"{item['url']}\n")
 			
 			self.update_config("default_playlist_path", default_m3u)
-			QMessageBox.information(self, "成功", "已將當前歌單設為預設啟動歌單。")
+			QMessageBox.information(self, "成功", f"已將當前歌單儲存並設為預設啟動歌單。\n檔案位置：{default_m3u}")
 		except Exception as e:
-			QMessageBox.critical(self, "錯誤", f"無法儲存預設歌單：\n{e}")
+			QMessageBox.critical(self, "錯誤", f"無法儲存預設歌單至 {default_m3u}：\n{e}")
 
 	def set_as_default_volume(self):
 		"""將目前的音量設為預設音量"""
