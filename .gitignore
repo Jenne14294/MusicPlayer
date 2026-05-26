@@ -10,16 +10,25 @@ env/
 
 # 個人設定與金鑰 (最重要！)
 config.json
+.env
+
+# 暫存與測試檔案
 test_playlist.m3u
 default_playlist.m3u
+log.txt
+temp_audio.*
 
 # 本地資料庫
 *.db
 music_player.db
 
-# 打包與日誌
+# VLC 核心組件 (體積過大且檔案過多，已整合進 spec 打包)
+libvlc.dll
+libvlccore.dll
+plugins/
+
+# 打包產出的成品
 build/
 dist/
-*.spec
-log.txt
-temp_audio.*
+# Youtube Player.spec 建議保留在 Git 中，以便未來重新打包
+Youtube Player.spec
