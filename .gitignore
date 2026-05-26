@@ -1,9 +1,25 @@
-.env
-config.json
+# Python 快取
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 虛擬環境
 venv/
-plugins/
-deno.exe
-libvlc.dll
-libvlccore.dll
-Youtube Player.spec
+ENV/
+env/
+
+# 個人設定與金鑰 (最重要！)
+config.json
+test_playlist.m3u
+default_playlist.m3u
+
+# 本地資料庫
+*.db
+music_player.db
+
+# 打包與日誌
 build/
+dist/
+*.spec
+log.txt
+temp_audio.*
