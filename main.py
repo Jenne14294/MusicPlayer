@@ -965,6 +965,9 @@ class YouTubePlayer(QWidget):
 		# 開始執行緒
 		self.status_worker.start()
 
+		# 載入預設設定 (音量與歌單詢問)
+		QTimer.singleShot(500, self.load_default_settings)
+
 
 	def init_ui(self):
 		layout = QGridLayout()
@@ -1077,10 +1080,22 @@ class YouTubePlayer(QWidget):
 		self.clear_button.clicked.connect(self.clear_playlist)
 		layout.addWidget(self.clear_button, 6, 2)
 
+		# 新增預設設定按鈕
+		default_settings_layout = QHBoxLayout()
+		self.btn_set_def_playlist = QPushButton("📌 設為預設歌單")
+		self.btn_set_def_playlist.clicked.connect(self.set_as_default_playlist)
+		default_settings_layout.addWidget(self.btn_set_def_playlist)
+
+		self.btn_set_def_vol = QPushButton("🔊 設為預設音量")
+		self.btn_set_def_vol.clicked.connect(self.set_as_default_volume)
+		default_settings_layout.addWidget(self.btn_set_def_vol)
+
+		layout.addLayout(default_settings_layout, 7, 0, 1, 3)
+
 		# 歌單顯示
 		self.list_widget = QListWidget()
 		self.list_widget.itemDoubleClicked.connect(lambda _: self.select_song())
-		layout.addWidget(self.list_widget, 7, 0, 1, 3)  # 橫跨兩欄
+		layout.addWidget(self.list_widget, 8, 0, 1, 3)  # 下移一列，原為 7
 
 		self.setLayout(layout)
 
@@ -1393,18 +1408,61 @@ class YouTubePlayer(QWidget):
 
 	def save_api_key(self, api_key):
 		"""將 API Key 存入設定檔"""
-		config = {}
-		if os.path.exists(CONFIG_FILE):
-			try:
-				with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-					config = json.load(f)
-			except:
-				pass
+		self.update_config("gemini_api_key", api_key)
+
+	def update_config(self, key, value):
+		"""通用的設定更新函式"""
+		config = self.get_gemini_config()
+		config[key] = value
+		try:
+			with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+				json.dump(config, f, indent=4)
+		except Exception as e:
+			print(f"儲存設定失敗: {e}")
+
+	def set_as_default_playlist(self):
+		"""將目前的播放清單儲存為預設歌單 (m3u)"""
+		if not self.playlist:
+			QMessageBox.warning(self, "失敗", "播放清單是空的，無法設為預設。")
+			return
+
+		default_m3u = "default_playlist.m3u"
+		try:
+			with open(default_m3u, "w", encoding="utf-8") as f:
+				f.write("#EXTM3U\n")
+				for item in self.playlist:
+					f.write(f"#EXTINF:-1,{item['title']}\n")
+					f.write(f"{item['url']}\n")
+			
+			self.update_config("default_playlist_path", default_m3u)
+			QMessageBox.information(self, "成功", "已將當前歌單設為預設啟動歌單。")
+		except Exception as e:
+			QMessageBox.critical(self, "錯誤", f"無法儲存預設歌單：\n{e}")
+
+	def set_as_default_volume(self):
+		"""將目前的音量設為預設音量"""
+		current_vol = self.volume_slider.value()
+		self.update_config("default_volume", current_vol)
+		QMessageBox.information(self, "成功", f"已將預設音量設為 {current_vol}%。")
+
+	def load_default_settings(self):
+		"""啟動時載入預設設定"""
+		config = self.get_gemini_config()
 		
-		config["gemini_api_key"] = api_key
-		
-		with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-			json.dump(config, f, indent=4)
+		# 1. 載入預設音量
+		def_vol = config.get("default_volume", 70)
+		self.volume_slider.setValue(def_vol)
+		self.change_volume(def_vol)
+
+		# 2. 詢問是否載入預設歌單
+		playlist_path = config.get("default_playlist_path", "")
+		if playlist_path and os.path.exists(playlist_path):
+			reply = QMessageBox.question(
+				self, '啟動提示', '偵測到預設歌單，是否要自動載入？',
+				QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes
+			)
+			if reply == QMessageBox.Yes:
+				self.load_playlist_from_file([playlist_path])
 
 	def search_lyrics(self, selected_index=None):
 		# 讀取設定檔
