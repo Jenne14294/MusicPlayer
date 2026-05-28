@@ -61,6 +61,69 @@ vlc_args = [
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "config.json")
+DB_FILE = os.path.join(SCRIPT_DIR, "music_player.db")
+
+import sqlite3
+
+class LyricDatabase:
+	def __init__(self, db_path):
+		self.db_path = db_path
+		self._init_db()
+
+	def _init_db(self):
+		conn = sqlite3.connect(self.db_path)
+		cursor = conn.cursor()
+		cursor.execute('''
+			CREATE TABLE IF NOT EXISTS lyrics_cache (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				raw_title TEXT UNIQUE,
+				song_key TEXT,
+				lyrics TEXT,
+				timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+			)
+		''')
+		cursor.execute('CREATE INDEX IF NOT EXISTS idx_song_key ON lyrics_cache (song_key)')
+		conn.commit()
+		conn.close()
+
+	def get_lyrics_by_raw_title(self, raw_title):
+		try:
+			conn = sqlite3.connect(self.db_path)
+			cursor = conn.cursor()
+			cursor.execute('SELECT lyrics FROM lyrics_cache WHERE raw_title = ?', (raw_title,))
+			result = cursor.fetchone()
+			conn.close()
+			return result[0] if result else None
+		except Exception as e:
+			print(f"資料庫讀取失敗 (raw_title): {e}")
+			return None
+
+	def get_lyrics_by_song_key(self, song_key):
+		try:
+			conn = sqlite3.connect(self.db_path)
+			cursor = conn.cursor()
+			cursor.execute('SELECT lyrics FROM lyrics_cache WHERE song_key = ? LIMIT 1', (song_key,))
+			result = cursor.fetchone()
+			conn.close()
+			return result[0] if result else None
+		except Exception as e:
+			print(f"資料庫讀取失敗 (song_key): {e}")
+			return None
+
+	def save_lyrics(self, raw_title, song_key, lyrics):
+		try:
+			conn = sqlite3.connect(self.db_path)
+			cursor = conn.cursor()
+			cursor.execute('''
+				INSERT OR REPLACE INTO lyrics_cache (raw_title, song_key, lyrics)
+				VALUES (?, ?, ?)
+			''', (raw_title, song_key, lyrics))
+			conn.commit()
+			conn.close()
+		except Exception as e:
+			print(f"資料庫寫入失敗: {e}")
+
+lyric_db = LyricDatabase(DB_FILE)
 
 class GeminiSettingsDialog(QDialog):
 	def __init__(self, parent=None):
