@@ -221,153 +221,218 @@ class GeminiLyricsWorker(QThread):
 	signal_done = pyqtSignal(str)
 	signal_need_reset = pyqtSignal(str) 
 
-	def __init__(self, raw_title, api_key, model_name):
+	def __init__(self, raw_title, url, api_key, model_name, custom_query=None, skip_cache=False):
 		super().__init__()
 		self.raw_title = raw_title
+		self.url = url
 		self.api_key = api_key
 		self.model_name = model_name
+		self.custom_query = custom_query
+		self.skip_cache = skip_cache
 
 	def run(self):
 		# ==========================================
-		# 階段 0：檢查原始標題快取 (最省 API)
+		# 階段 0：檢查原始標題快取 (若非強制重新搜尋)
 		# ==========================================
-		cached_lyrics = lyric_db.get_lyrics_by_raw_title(self.raw_title)
-		if cached_lyrics:
-			print(f"📦 命中原始標題快取: {self.raw_title}")
-			self.signal_done.emit(cached_lyrics)
-			return
+		if not self.skip_cache and not self.custom_query:
+			cached_lyrics = lyric_db.get_lyrics_by_raw_title(self.raw_title)
+			if cached_lyrics:
+				print(f"📦 命中原始標題快取: {self.raw_title}")
+				self.signal_done.emit(cached_lyrics)
+				return
 
 		track_name = self.raw_title
 		artist_name = ""
+		self.song_key = self.raw_title.lower() # 預設 key
+
+		# 如果有自定義查詢，直接跳到搜尋階段
+		if self.custom_query:
+			print(f"🎯 使用使用者定義查詢: {self.custom_query}")
+			self._search_lrclib([self.custom_query])
+			return
 
 		# ==========================================
-		# 階段一：利用 Gemini AI 萃取歌名與歌手
+		# 階段 0.5：嘗試從 URL 抓取元數據 (精準度最高)
 		# ==========================================
-		try:
-			client = genai.Client(api_key=self.api_key)
-			
-			# 強制要求輸出 JSON 格式，方便程式讀取
-			prompt = (
-				f"請從以下 YouTube 影片標題中，精準提取出「歌曲名稱」與「歌手名稱」。\n"
-				f"影片標題：「{self.raw_title}」\n"
-				"請嚴格輸出 JSON 格式，格式如下：\n"
-				'{"title": "歌曲名稱", "artist": "歌手名稱"}\n'
-				"如果標題中沒有歌手資訊，artist 請填寫空字串。不要輸出任何其他說明文字。"
-			)
+		if self.url and self.url.startswith("http"):
+			try:
+				print(f"🌐 嘗試從 URL 抓取元數據: {self.url}")
+				ydl_opts = {'quiet': True, 'noplaylist': True}
+				with YoutubeDL(ydl_opts) as ydl:
+					info = ydl.extract_info(self.url, download=False)
+					# 擴充抓取欄位：artist -> creator -> uploader
+					artist_name = info.get('artist') or info.get('creator') or info.get('uploader', '')
+					# 擴充抓取欄位：track -> alt_title -> title
+					track_name = info.get('track') or info.get('alt_title') or info.get('title', self.raw_title)
+					
+					if artist_name and track_name and track_name != self.raw_title:
+						print(f"✅ 從 URL 獲取成功 -> 歌名: {track_name}, 歌手: {artist_name}")
+			except Exception as e:
+				print(f"URL 獲取元數據失敗: {e}")
 
-			response = client.models.generate_content(
-				model=self.model_name,
-				contents=prompt
-			)
-			
-			# 清理 AI 可能帶有的 Markdown 標籤 (例如 ```json...```)
-			raw_text = response.text.strip().replace('```json', '').replace('```', '')
-			parsed_data = json.loads(raw_text)
-			
-			track_name = parsed_data.get('title', self.raw_title)
-			artist_name = parsed_data.get('artist', '')
-			
-			print(f"🧠 AI 解析結果 -> 歌名: {track_name}, 歌手: {artist_name}")
+		# ==========================================
+		# 階段一：利用 Gemini AI 萃取歌名與歌手 (若元數據仍不足)
+		# ==========================================
+		# 如果 track_name 還是原始標題，或者沒有歌手資訊，就讓 AI 試試
+		if not artist_name or track_name == self.raw_title:
+			try:
+				client = genai.Client(api_key=self.api_key)
+				prompt = (
+					f"請從以下 YouTube 影片標題中，精準提取出「歌曲名稱」與「歌手名稱」。\n"
+					f"影片標題：「{self.raw_title}」\n"
+					"請嚴格輸出 JSON 格式，格式如下：\n"
+					'{"title": "歌曲名稱", "artist": "歌手名稱"}\n'
+					"如果標題中沒有歌手資訊，artist 請填寫空字串。不要輸出任何其他說明文字。"
+				)
+				response = client.models.generate_content(model=self.model_name, contents=prompt)
+				raw_text = response.text.strip().replace('```json', '').replace('```', '')
+				parsed_data = json.loads(raw_text)
+				
+				track_name = parsed_data.get('title', track_name)
+				artist_name = parsed_data.get('artist', artist_name)
+				print(f"🧠 AI 解析結果 -> 歌名: {track_name}, 歌手: {artist_name}")
+			except Exception as e:
+				print(f"Gemini 解析失敗: {e}")
 
-			# 🌟 階段 1.5：檢查標準化 song_key 快取 (不同影片但同首歌)
-			self.song_key = f"{artist_name} - {track_name}".strip().lower()
+		self.song_key = f"{artist_name} - {track_name}".strip().lower()
+
+		# 🌟 階段 1.5：再次檢查標準化 song_key 快取
+		if not self.skip_cache:
 			cached_lyrics = lyric_db.get_lyrics_by_song_key(self.song_key)
 			if cached_lyrics:
 				print(f"📦 命中歌曲名稱快取: {self.song_key}")
-				# 雖然是不同影片，但既然解析出同一首歌，就幫這個新影片也存一份快速索引
 				lyric_db.save_lyrics(self.raw_title, self.song_key, cached_lyrics)
 				self.signal_done.emit(cached_lyrics)
 				return
 
-		except Exception as e:
-			error_msg = str(e).lower()
-			if "quota" in error_msg or "429" in error_msg:
-				self.signal_need_reset.emit("quota")
-				return 
-			elif "not found" in error_msg or "404" in error_msg:
-				self.signal_need_reset.emit("invalid_model")
-				return
-			else:
-				print(f"Gemini 解析失敗，退回使用原始標題：{e}")
-				self.song_key = self.raw_title.lower()
-
-
 		# ==========================================
-		# 階段二：向 LRCLIB 請求精準歌詞
+		# 階段二：向 LRCLIB 請求精準歌詞 (多重嘗試機制)
 		# ==========================================
-		try:
-			# 組合搜尋關鍵字
-			search_query = f"{track_name} {artist_name}".strip()
-			print(f"🔍 正在向 LRCLIB 搜尋: {search_query}")
-			
-			url = f"https://lrclib.net/api/search?q={urllib.parse.quote(search_query)}"
-			
-			# LRCLIB 官方要求必須附上 User-Agent
-			headers = {'User-Agent': 'YouTubeMusicPlayer/1.0 (https://github.com/Jenne14294)'}
-			
-			res = requests.get(url, headers=headers, timeout=10)
-			
-			if res.status_code == 200:
-				data = res.json()
-				if data and len(data) > 0:
-					import re
-					
-					best_lyrics = None
-					found_title = track_name
-					found_artist = artist_name
+		search_queries = []
+		search_queries.append(f"{track_name} {artist_name}".strip())
+		if artist_name and track_name != self.raw_title:
+			search_queries.append(track_name.strip())
+		if "/" in track_name:
+			search_queries.extend([p.strip() for p in track_name.split("/") if p.strip()])
+		
+		self._search_lrclib(search_queries)
 
-					for track in data:
-						lyrics = track.get('plainLyrics')
-						if lyrics:
-							if not best_lyrics:
-								best_lyrics = lyrics
-								found_title = track.get('trackName', track_name)
-								found_artist = track.get('artistName', artist_name)
-							
-							if re.search(r'[\u4e00-\u9fff]', lyrics):
-								best_lyrics = lyrics
-								found_title = track.get('trackName', track_name)
-								found_artist = track.get('artistName', artist_name)
-								break 
+	def _search_lrclib(self, queries):
+		headers = {'User-Agent': 'YouTubeMusicPlayer/1.0 (https://github.com/Jenne14294)'}
+		lyrics_found = False
 
-					if best_lyrics:
-						final_text = f"【{found_title}】 - {found_artist}\n\n{best_lyrics}"
-						# 🌟 階段三：存入資料庫
-						lyric_db.save_lyrics(self.raw_title, self.song_key, final_text)
-						self.signal_done.emit(final_text)
-					else:
-						print("找到了歌曲，但沒有歌詞資料。")
-						self.signal_done.emit("")
-				else:
-					print("LRCLIB 找不到這首歌。")
-					self.signal_done.emit("")
-			else:
-				print(f"LRCLIB API 錯誤，狀態碼: {res.status_code}")
-				self.signal_done.emit("")
-				
-		except Exception as e:
-			print(f"取得 LRCLIB 歌詞發生嚴重錯誤：{e}")
+		for query in queries:
+			if not query: continue
+			try:
+				print(f"🔍 嘗試搜尋: {query}")
+				url = f"https://lrclib.net/api/search?q={urllib.parse.quote(query)}"
+				res = requests.get(url, headers=headers, timeout=10)
+				if res.status_code == 200:
+					data = res.json()
+					if data and len(data) > 0:
+						import re
+						best_l = None
+						f_t, f_a = "", ""
+						for track in data:
+							l = track.get('plainLyrics')
+							if l:
+								if not best_l:
+									best_l, f_t, f_a = l, track.get('trackName', ''), track.get('artistName', '')
+								if re.search(r'[\u4e00-\u9fff]', l):
+									best_l, f_t, f_a = l, track.get('trackName', ''), track.get('artistName', '')
+									break
+						if best_l:
+							final = f"【{f_t}】 - {f_a}\n\n{best_l}"
+							lyric_db.save_lyrics(self.raw_title, self.song_key, final)
+							self.signal_done.emit(final)
+							lyrics_found = True
+							break
+			except: pass
+		
+		if not lyrics_found:
 			self.signal_done.emit("")
 
 class LyricsDialog(QDialog):
-	def __init__(self, title, lyrics, parent=None):
+	def __init__(self, raw_title, url, lyrics, parent=None):
 		super().__init__(parent)
-		self.setWindowTitle(f"歌詞 - {title}")
-		self.resize(400, 600)  # 設定視窗大小
+		self.raw_title = raw_title
+		self.url = url
+		self.parent_player = parent
+		self.setWindowTitle(f"歌詞 - {raw_title}")
+		self.resize(500, 750)
+
+		# 🌟 套用深色主題與強制字體大小
+		self.setStyleSheet("""
+			QDialog {
+				background-color: #1e1e2f;
+				color: #ffffff;
+			}
+			QPushButton {
+				background-color: #2e2e3f;
+				color: white;
+				border: 1px solid #555;
+				border-radius: 6px;
+				padding: 8px;
+				font-size: 14px;
+			}
+			QPushButton:hover { background-color: #3e3e5f; }
+			QTextEdit {
+				background-color: #2a2a3a;
+				color: #ffffff;
+				border: 1px solid #555;
+				border-radius: 4px;
+				font-size: 22px; /* 這裡直接設定像素大小，確保視覺上明顯變大 */
+				line-height: 1.6;
+			}
+		""")
 
 		layout = QVBoxLayout(self)
 		
-		# 使用唯讀的文字框來顯示歌詞
-		self.text_edit = QTextEdit(self)
+		# 頂部控制列
+		ctrl_layout = QHBoxLayout()
+		self.btn_edit = QPushButton("📝 編輯歌詞")
+		self.btn_save = QPushButton("💾 儲存變更")
+		self.btn_save.setEnabled(False)
+		self.btn_research = QPushButton("🔍 重新搜尋")
+		
+		ctrl_layout.addWidget(self.btn_edit)
+		ctrl_layout.addWidget(self.btn_save)
+		ctrl_layout.addWidget(self.btn_research)
+		layout.addLayout(ctrl_layout)
+
+		# 歌詞顯示區
+		self.text_edit = QTextEdit()
 		self.text_edit.setReadOnly(True)
 		self.text_edit.setPlainText(lyrics)
-		
-		# 讓字體稍微大一點，方便閱讀
-		font = self.text_edit.font()
-		font.setPointSize(18)
-		self.text_edit.setFont(font)
-		
 		layout.addWidget(self.text_edit)
+
+		# 事件連接
+		self.btn_edit.clicked.connect(self.toggle_edit)
+		self.btn_save.clicked.connect(self.save_lyrics)
+		self.btn_research.clicked.connect(self.manual_research)
+
+	def toggle_edit(self):
+		is_readonly = self.text_edit.isReadOnly()
+		self.text_edit.setReadOnly(not is_readonly)
+		self.btn_save.setEnabled(is_readonly)
+		self.btn_edit.setText("🔓 鎖定" if is_readonly else "📝 編輯歌詞")
+
+	def save_lyrics(self):
+		new_lyrics = self.text_edit.toPlainText()
+		# 這裡需要一個能產生 song_key 的方法，簡單起見，我們只存 raw_title 的關聯
+		lyric_db.save_lyrics(self.raw_title, self.raw_title.lower(), new_lyrics)
+		QMessageBox.information(self, "成功", "歌詞已手動更新至資料庫。")
+		self.btn_save.setEnabled(False)
+		self.text_edit.setReadOnly(True)
+		self.btn_edit.setText("📝 編輯歌詞")
+
+	def manual_research(self):
+		from PyQt5.QtWidgets import QInputDialog
+		query, ok = QInputDialog.getText(self, "手動搜尋", "請輸入歌手與歌名關鍵字：", QLineEdit.Normal, self.raw_title)
+		if ok and query:
+			if self.parent_player:
+				self.close()
+				self.parent_player.search_lyrics(custom_query=query)
 
 class ClickableSlider(QSlider):
 	def mousePressEvent(self, event):
@@ -1333,7 +1398,7 @@ class YouTubePlayer(QWidget):
 			return
 
 		# 先讓使用者選儲存路徑
-		save_path, _ = QFileDialog.getSaveFileName(
+		save_path, _ = QFileDialog.getOpenFileNames(
 			self,
 			"選擇儲存位置",
 			f"{title}.mp3",
@@ -1546,7 +1611,7 @@ class YouTubePlayer(QWidget):
 			if reply == QMessageBox.Yes:
 				self.load_playlist_from_file([playlist_path])
 
-	def search_lyrics(self, selected_index=None):
+	def search_lyrics(self, selected_index=None, custom_query=None):
 		# 讀取設定檔
 		config = self.get_gemini_config()
 		api_key = config.get("gemini_api_key", "")
@@ -1561,22 +1626,29 @@ class YouTubePlayer(QWidget):
 		if not self.playlist:
 			return
 
-		selected_index = self.current_index if not selected_index else selected_index
+		selected_index = self.current_index if selected_index is None else selected_index
 		
-		# 🌟 取得完整的影片標題
+		# 🌟 取得完整的影片標題與網址
 		self.current_lyrics_title = self.playlist[selected_index]["title"]
+		current_url = self.playlist[selected_index]["url"]
 
 		# 🌟 顯示載入中彈出視窗
-		self.loading_dialog = QProgressDialog("正在從 Gemini 查詢完整歌詞...", None, 0, 0, self)
+		msg = "正在搜尋歌詞..." if not custom_query else f"正在搜尋：{custom_query}"
+		self.loading_dialog = QProgressDialog(msg, None, 0, 0, self)
 		self.loading_dialog.setWindowTitle("請稍候")
 		self.loading_dialog.setWindowModality(Qt.WindowModal)
-		self.loading_dialog.setCancelButton(None) # 隱藏取消按鈕避免意外報錯
+		self.loading_dialog.setCancelButton(None) 
 		self.loading_dialog.show()
 
-		# 🌟 啟動 Worker (精準傳遞 3 個參數)
-		self.lyrics_worker = GeminiLyricsWorker(self.current_lyrics_title, api_key, model_name)
+		# 🌟 啟動 Worker (傳遞新參數：custom_query, skip_cache)
+		# 如果有自定義查詢，通常代表使用者想修正結果，因此強制跳過快取
+		skip_cache = True if custom_query else False
+		self.lyrics_worker = GeminiLyricsWorker(
+			self.current_lyrics_title, current_url, api_key, model_name, 
+			custom_query=custom_query, skip_cache=skip_cache
+		)
 		self.lyrics_worker.signal_done.connect(self.on_lyrics_found)
-		self.lyrics_worker.signal_need_reset.connect(self.handle_gemini_error) # 對應你原本的錯誤處理
+		self.lyrics_worker.signal_need_reset.connect(self.handle_gemini_error) 
 		self.lyrics_worker.start()
 
 	def on_lyrics_found(self, lyrics):
@@ -1585,36 +1657,16 @@ class YouTubePlayer(QWidget):
 			self.loading_dialog.close()
 			
 		if lyrics:
-			# 🌟 關鍵修改：用 self.lyrics_window 存起來，並用 show() 顯示
-			self.lyrics_window = LyricsDialog(self.current_lyrics_title, lyrics, self)
-			# 確保視窗不會鎖死主程式 (設定為非獨佔模式)
+			# 🌟 傳遞更多資訊給 LyricsDialog
+			current_url = self.playlist[self.current_index]["url"] if self.playlist else ""
+			self.lyrics_window = LyricsDialog(self.current_lyrics_title, current_url, lyrics, self)
 			self.lyrics_window.setWindowModality(Qt.NonModal) 
 			self.lyrics_window.show()
 		else:
-			QMessageBox.information(self, "搜不到", "抱歉，AI 找不到這首歌的完整歌詞。")
-
-	def show_lyrics(self, lyrics_text):
-		if lyrics_text:
-			# 搜尋成功，打開我們自訂的歌詞視窗
-			self.lyrics_window = LyricsDialog(self.current_lyrics_title, lyrics_text, self)
+			QMessageBox.information(self, "搜不到", "抱歉，找不到這首歌的完整歌詞。\n您可以點擊「重新搜尋」並手動輸入關鍵字。")
+			# 即使沒找到，也開啟一個空的對話框讓使用者可以「重新搜尋」
+			self.lyrics_window = LyricsDialog(self.current_lyrics_title, "", "", self)
 			self.lyrics_window.show()
-		else:
-			# 搜尋失敗 (可能是 Key 錯誤、額度用盡或網路問題)
-			self.tray_icon.showMessage(
-				"歌詞搜尋失敗",
-				"找不到歌詞，或 API Key 無效/網路異常",
-				2, # QSystemTrayIcon.Warning
-				3000
-			)
-			
-			# 如果懷疑是 Key 的問題，可以給個重設的選項 (非必要，可選加)
-			reply = QMessageBox.question(
-				self, '搜尋失敗', '無法取得歌詞。是否要重新設定 API Key？',
-				QMessageBox.Yes | QMessageBox.No, QMessageBox.No
-			)
-			if reply == QMessageBox.Yes:
-				self.save_api_key("") # 清空 Key
-				self.search_lyrics()  # 重新觸發搜尋流程
 
 	def handle_gemini_error(self, error_type):
 		"""當模型失效或額度爆掉時觸發"""
@@ -1667,7 +1719,7 @@ class YouTubePlayer(QWidget):
 
 
 	def select_song(self, idx=None):
-		row = self.list_widget.currentRow() if not idx else idx
+		row = self.list_widget.currentRow() if idx is None else idx
 		
 		if row != -1:
 			self.current_index = row
