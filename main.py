@@ -1612,7 +1612,9 @@ class YouTubePlayer(QWidget):
 				self.load_playlist_from_file([playlist_path])
 
 	def search_lyrics(self, selected_index=None, custom_query=None):
-		# 讀取設定檔
+		if isinstance(selected_index, bool):
+			selected_index = None
+			# 讀取設定檔
 		config = self.get_gemini_config()
 		api_key = config.get("gemini_api_key", "")
 		model_name = config.get("gemini_model", "")
@@ -1630,13 +1632,14 @@ class YouTubePlayer(QWidget):
 		
 		# 🌟 取得完整的影片標題與網址
 		self.current_lyrics_title = self.playlist[selected_index]["title"]
+		self.current_lyrics_url = self.playlist[selected_index]["url"]
 		current_url = self.playlist[selected_index]["url"]
 
 		# 🌟 顯示載入中彈出視窗
 		msg = "正在搜尋歌詞..." if not custom_query else f"正在搜尋：{custom_query}"
 		self.loading_dialog = QProgressDialog(msg, None, 0, 0, self)
 		self.loading_dialog.setWindowTitle("請稍候")
-		self.loading_dialog.setWindowModality(Qt.WindowModal)
+		self.loading_dialog.setWindowModality(Qt.NonModal)
 		self.loading_dialog.setCancelButton(None) 
 		self.loading_dialog.show()
 
@@ -1658,7 +1661,7 @@ class YouTubePlayer(QWidget):
 			
 		if lyrics:
 			# 🌟 傳遞更多資訊給 LyricsDialog
-			current_url = self.playlist[self.current_index]["url"] if self.playlist else ""
+			current_url = getattr(self, "current_lyrics_url", "")
 			self.lyrics_window = LyricsDialog(self.current_lyrics_title, current_url, lyrics, self)
 			self.lyrics_window.setWindowModality(Qt.NonModal) 
 			self.lyrics_window.show()
