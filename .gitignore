@@ -32,3 +32,5 @@ build/
 dist/
 # Youtube Player.spec 建議保留在 Git 中，以便未來重新打包
 Youtube Player.spec
+build_tmp/
+output/

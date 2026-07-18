@@ -5,9 +5,10 @@ import os
 import vlc
 import json
 import requests
-import urllib.parse
 import webbrowser
 import PyQt5
+
+from urllib.parse import urlparse, parse_qs
 
 # 1. 取得 PyQt5 套件的安裝路徑
 pyqt_path = os.path.dirname(PyQt5.__file__)
@@ -826,37 +827,69 @@ class EditSongsDialog(QDialog):
 			webbrowser.open(url)
 
 class PlaylistLoader(QThread):
-	finished = pyqtSignal(list, bool)  # 載入完成後傳回 playlist
+	finished = pyqtSignal(list, bool)
 
 	def __init__(self, url, parent=None):
 		super().__init__(parent)
 		self.url = url
 		self.is_keyword = False
 
+	def normalize_url(self, url):
+		try:
+			query = parse_qs(urlparse(url).query)
+			if "list" in query:
+				return f"https://www.youtube.com/playlist?list={query['list'][0]}"
+		except:
+			pass
+		return url
+
 	def run(self):
 		playlist = []
+
 		ydl_opts = {
-			'extract_flat': True,       # 🌟 核心加速：只抓取標題和 ID，不解析真實音訊串流！
-			'skip_download': True,      # 絕對不下載
-			'quiet': True,              # 不輸出多餘訊息
-			'ignoreerrors': True,       # 遇到無法讀取的影片(例如私人影片)直接跳過，不卡死程式
-			'noplaylist': False         # 建議設為 False，這樣如果用戶輸入的是「播放清單網址」，才能秒抓整串歌單
+			'extract_flat': True,
+			'skip_download': True,
+			'quiet': True,
+			'ignoreerrors': True,
+			'noplaylist': False
 		}
 
 		with YoutubeDL(ydl_opts) as ydl:
 			try:
 				if self.url.startswith("https://"):
+					self.url = self.normalize_url(self.url)
+					print(self.url)
 					info = ydl.extract_info(self.url, download=False)
+					
+					print(info.keys())
+					print(info.get('title'))
+					print(info.get('entries'))
 				else:
 					self.is_keyword = True
-					search_query = f"ytsearch5:{self.url}"  # 搜尋前 5 筆
-					info = ydl.extract_info(search_query, download=False)
+					info = ydl.extract_info(
+						f"ytsearch5:{self.url}",
+						download=False
+					)
 
 				entries = info.get('entries', [info])
+
 				for entry in entries:
-					video_url = f"https://www.youtube.com/watch?v={entry['id']}" if 'id' in entry else entry['url']
-					title = entry.get('title', video_url)
-					playlist.append({'title': title, 'url': video_url})
+					if not entry:
+						continue
+
+					video_id = entry.get('id')
+					video_url = (
+						f"https://www.youtube.com/watch?v={video_id}"
+						if video_id else entry.get('url')
+					)
+
+					if not video_url:
+						continue
+
+					playlist.append({
+						'title': entry.get('title', video_url),
+						'url': video_url
+					})
 
 			except Exception as e:
 				print(f"讀取失敗：{e}")
@@ -1248,9 +1281,6 @@ class YouTubePlayer(QWidget):
 
 	def load_playlist(self):
 		url = self.url_input.text()
-
-		print(url)
-
 		if not url:
 			return
 			
